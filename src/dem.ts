@@ -344,9 +344,12 @@ export async function elevationAt(lng: number, lat: number, z = DEM_MAXZOOM): Pr
   return (v(x0, y0) * (1 - ax) + v(x0 + 1, y0) * ax) * (1 - ay) + (v(x0, y0 + 1) * (1 - ax) + v(x0 + 1, y0 + 1) * ax) * ay;
 }
 
-/** Slope (deg) and aspect (deg) at a point, from elevations ~1 DEM pixel apart. */
+/**
+ * Slope (deg) and aspect (deg) at a point, from elevations 8 m either side: about the scale of
+ * the slope you'd ski or trigger, and robust to boulder-sized bumps in a 1 m model.
+ */
 export async function slopeAt(lng: number, lat: number) {
-  const d = Math.max(metersPerPixel(DEM_MAXZOOM, lat), 5);
+  const d = Math.max(metersPerPixel(DEM_MAXZOOM, lat), 8);
   const dLat = d / 111320, dLng = d / (111320 * Math.cos((lat * Math.PI) / 180));
   const [n, s, e, w, c] = await Promise.all([
     elevationAt(lng, lat + dLat), elevationAt(lng, lat - dLat),

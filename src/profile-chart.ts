@@ -1,6 +1,6 @@
-// Elevation profile as inline SVG: the area under the line is coloured by slope class.
+// Elevation profile as inline SVG: the area under the line is coloured by the slope class of the terrain.
 import type { Profile } from './geo';
-import { fmtDist, fmtEle } from './geo';
+import { aspectName, fmtDist, fmtEle } from './geo';
 import { SLOPE_CLASSES } from './slope';
 
 const W = 320, H = 110, PAD_L = 34, PAD_B = 16, PAD_T = 8;
@@ -48,7 +48,7 @@ export function renderProfile(el: HTMLElement, p: Profile, onHover: (i: number |
     cursor.setAttribute('x1', `${sx(q.d)}`);
     cursor.setAttribute('x2', `${sx(q.d)}`);
     cursor.setAttribute('visibility', 'visible');
-    readout.textContent = `${fmtDist(q.d)} · ${fmtEle(q.h)} · ${Math.round(q.slope)}°`;
+    readout.textContent = `${fmtDist(q.d)} · ${fmtEle(q.h)} · ${Math.round(q.slope)}° ${aspectName(q.aspect)} slope`;
     onHover(best);
   };
   const leave = () => {

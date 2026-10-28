@@ -312,13 +312,13 @@ function statsHtml(p: Profile | null, kind: 'piste' | 'lift' | 'route') {
           [`↑ ${fmtEle(p.ascent)}`, 'Ascent'],
           [`↓ ${fmtEle(p.descent)}`, 'Descent'],
           [fmtEle(p.max), 'Highest'],
-          [`${Math.round(p.steepest)}°`, 'Steepest'],
+          [`${Math.round(p.steepest)}°`, 'Max slope'],
           [tourTime(p), 'Est. time'],
         ]
       : [
           [fmtDist(p.length), 'Length'],
           [fmtEle(p.max - p.min), kind === 'lift' ? 'Rise' : 'Vertical'],
-          [kind === 'lift' ? fmtEle(p.max) : `${Math.round(p.steepest)}°`, kind === 'lift' ? 'Top' : 'Steepest'],
+          [kind === 'lift' ? fmtEle(p.max) : `${Math.round(p.steepest)}°`, kind === 'lift' ? 'Top' : 'Max slope'],
           [fmtEle(p.max), 'Top'],
           [fmtEle(p.min), 'Bottom'],
           [`${Math.round((Math.atan((p.max - p.min) / p.length) * 180) / Math.PI)}°`, 'Avg. pitch'],

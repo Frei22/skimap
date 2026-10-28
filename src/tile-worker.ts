@@ -26,6 +26,10 @@ async function run(op: string, args: any[], abort: AbortController): Promise<{ r
       const pts = args[0] as [number, number][];
       return { result: await Promise.all(pts.map(([lng, lat]) => elevationAt(lng, lat))), transfer: [] };
     }
+    case 'terrainAlong': {
+      const pts = args[0] as [number, number][];
+      return { result: await Promise.all(pts.map(([lng, lat]) => slopeAt(lng, lat))), transfer: [] };
+    }
     case 'pointInfo':
       return { result: await slopeAt(args[0], args[1]), transfer: [] };
   }

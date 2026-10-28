@@ -4,6 +4,10 @@ A free 3D ski and ski-touring map in the spirit of FATMAP and Skida: high-resolu
 on 3D terrain, turned into a winter scene, with slope angles, pistes, lifts and touring routes.
 It starts with **Chamonix Mont-Blanc**, **Riksgränsen** and **Hemavan Tärnaby**.
 
+![Skimap: winter 3D view of the Mont Blanc massif, slope overlay with a planned route, a piste card, and the phone layout](docs/preview.jpg)
+
+<sub>Preview rendered in the build sandbox with 10 m Sentinel-2 imagery standing in for the 20 cm IGN orthophotos, which the sandbox could not reach.</sub>
+
 It is a static website with no backend and no API keys. All imagery, elevation and piste data come
 from free public sources, and the image processing runs in the visitor's browser, so hosting is free.
 

@@ -21,7 +21,7 @@ const poolSize = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 
 const pool = Array.from({ length: poolSize }, spawn);
 let nextId = 1;
 
-const DEM_OPS = new Set(['dem', 'elevations', 'pointInfo']);
+const DEM_OPS = new Set(['dem', 'elevations', 'pointInfo', 'terrainAlong']);
 
 /** `area` (e.g. a z10 ancestor tile key) keeps neighbouring tiles on the same worker. */
 export function call<T>(op: string, args: unknown[], signal?: AbortSignal, area?: string): Promise<T> {
