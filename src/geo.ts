@@ -62,6 +62,18 @@ export async function profile(line: Position[]): Promise<Profile | null> {
   return { points, length, ascent, descent, min: Math.min(...hs), max: Math.max(...hs), steepest };
 }
 
+/** Distance along the line over terrain in each slope band: [below 27°, 27–29°, 30–34°, …, 50°+]. */
+export function distanceBySlope(p: Profile, bounds: number[]) {
+  const out = new Array(bounds.length + 1).fill(0);
+  for (let i = 0; i < p.points.length - 1; i++) {
+    const s = p.points[i].slope;
+    let k = 0;
+    while (k < bounds.length && s >= bounds[k]) k++;
+    out[k] += p.points[i + 1].d - p.points[i].d;
+  }
+  return out;
+}
+
 export const fmtDist = (m: number) => (m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(m < 10000 ? 2 : 1)} km`);
 export const fmtEle = (m: number) => `${Math.round(m).toLocaleString('en').replace(/,/g, ' ')} m`;
 

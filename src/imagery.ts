@@ -1,11 +1,10 @@
-// `ski-imagery://z/x/y?mode=winter|summer` — a mosaic of the best orthophoto per tile, optionally
+// `ski-imagery://z/x/y?mode=winter|summer` (IMAGERY_PROTOCOL) — a mosaic of the best orthophoto per tile, optionally
 // turned into a winter scene (snow cover from elevation + slope, frosted forest, low-sun shading).
 import { IMAGERY, type ImageryProvider } from './config';
 import { FLAT_SHADE, terrainForTile } from './dem';
 import { snowlineAt } from './regions';
 import { TILE, clamp, decodePixels, encodePixels, parseTileUrl, smoothstep, tileBounds } from './tiles';
 
-export const IMAGERY_PROTOCOL = 'ski-imagery';
 
 
 function covers(p: ImageryProvider, z: number, x: number, y: number) {

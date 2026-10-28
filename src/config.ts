@@ -62,6 +62,9 @@ export const DEM_LAYERS: DemLayer[] = [
   },
 ];
 
+/** Highest zoom any elevation layer serves. */
+export const DEM_MAXZOOM = Math.max(...DEM_LAYERS.map((l) => l.maxzoom));
+
 /** 3D terrain mesh detail stops here; beyond it, more DEM detail only feeds slope & snow shading. */
 export const TERRAIN_MAXZOOM = 15;
 

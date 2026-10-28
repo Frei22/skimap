@@ -22,7 +22,11 @@ from free public sources, and the image processing runs in the visitor's browser
 - **Best available imagery per tile:** IGN France BD ORTHO (20 cm), swisstopo SWISSIMAGE (10 cm),
   optionally Lantmäteriet for Sweden, then Esri World Imagery. Gaps in one source are filled from the
   next. Beyond a source's highest zoom its tiles are upscaled, so you can zoom right in on a crux.
-- **Slope-angle overlay** with avalanche-terrain classes (27°, 30°, 35°, 40°, 45°, 50°+).
+- **Slope-angle filter** (one tap, triangle button): avalanche-terrain colour classes (27°, 30°, 35°,
+  40°, 45°, 50°+). Drag the two handles on the colour bar to show only a range, say 35–45° for steep
+  lines or under 30° for a high-danger day, or use the presets. Add an **aspect filter**: tap the
+  compass wedges to show only, say, the north-west to north-east slopes the avalanche bulletin flags.
+  Changes apply instantly, because each tile's slope and aspect are cached.
 - **Pistes, lifts, ski-touring routes, cross-country trails and huts** from OpenStreetMap, with
   standard difficulty colours.
 - **Click anywhere** for elevation, slope, aspect and a link to the avalanche forecast.

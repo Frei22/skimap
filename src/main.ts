@@ -6,21 +6,24 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import mlcontour from 'maplibre-contour';
 import type { Feature, LineString, MultiLineString, Position } from 'geojson';
 import { DEM_LAYERS, IMAGERY } from './config';
-import { aspectName, distance, fmtDist, fmtEle, profile, type Profile } from './geo';
-import { IMAGERY_PROTOCOL } from './imagery';
+import { aspectName, distance, distanceBySlope, fmtDist, fmtEle, profile, type Profile } from './geo';
+import { DEM_PROTOCOL, IMAGERY_PROTOCOL, SLOPE_PROTOCOL } from './protocols';
 import { OsmStore } from './osm';
 import { renderProfile } from './profile-chart';
 import { REGIONS, regionById, type Region } from './regions';
 import { areaKey, call } from './rpc';
-import { SLOPE_CLASSES, SLOPE_PROTOCOL } from './slope';
-import { DEM_PROTOCOL, DIFFICULTY_COLORS, DIFFICULTY_LABELS, LAYER_GROUPS, buildStyle, imageryTiles, type Toggles } from './style';
+import {
+  ALL_ASPECTS, ASPECTS, DEFAULT_SLOPE_FILTER, LOW_SLOPE_COLOR, SLOPE_CLASSES, SLOPE_DOMAIN,
+  describeFilter, slopeTileUrl, type SlopeFilter,
+} from './slope-filter';
+import { DIFFICULTY_COLORS, DIFFICULTY_LABELS, LAYER_GROUPS, buildStyle, imageryTiles, type Toggles } from './style';
 import { parseTileUrl } from './tiles';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 // ---------------------------------------------------------------- settings
-type Settings = Toggles & { region: string; exaggeration: number; hd: boolean };
+type Settings = Toggles & { region: string; exaggeration: number; hd: boolean; slopeFilter: SlopeFilter };
 const SETTINGS_KEY = 'skimap:settings:v1';
 const defaults: Settings = {
   region: 'chamonix',
@@ -32,6 +35,7 @@ const defaults: Settings = {
   hillshade: false,
   exaggeration: 1,
   hd: window.devicePixelRatio >= 2 && !matchMedia('(pointer: coarse)').matches,
+  slopeFilter: DEFAULT_SLOPE_FILTER,
 };
 const settings: Settings = { ...defaults };
 try {
@@ -80,7 +84,7 @@ const contourTiles = contourDem.contourProtocolUrl({
 const hasHash = /^#\d/.test(location.hash);
 const map = new maplibregl.Map({
   container: 'map',
-  style: buildStyle(settings, contourTiles, settings.hd ? 128 : 256, settings.exaggeration),
+  style: buildStyle(settings, contourTiles, settings.hd ? 128 : 256, settings.exaggeration, settings.slopeFilter),
   center: region.camera.center,
   zoom: region.camera.zoom,
   pitch: region.camera.pitch,
@@ -194,17 +198,20 @@ layersSheet.querySelectorAll<HTMLElement>('[data-season]').forEach((b) =>
 
 function applyToggle(key: keyof typeof LAYER_GROUPS) {
   for (const id of LAYER_GROUPS[key]) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', settings[key] ? 'visible' : 'none');
-  if (key === 'slope') renderSlopeLegend();
+  if (key === 'slope') syncSlopePanel();
   if (key === 'pistes') loadVisibleOsm();
+}
+function setToggle(key: keyof typeof LAYER_GROUPS, on: boolean) {
+  settings[key] = on;
+  save();
+  const input = layersSheet.querySelector<HTMLInputElement>(`[data-toggle="${key}"]`);
+  if (input) input.checked = on;
+  applyToggle(key);
 }
 layersSheet.querySelectorAll<HTMLInputElement>('[data-toggle]').forEach((input) => {
   const key = input.dataset.toggle as keyof typeof LAYER_GROUPS;
   input.checked = settings[key];
-  input.addEventListener('change', () => {
-    settings[key] = input.checked;
-    save();
-    applyToggle(key);
-  });
+  input.addEventListener('change', () => setToggle(key, input.checked));
 });
 
 const exag = $<HTMLInputElement>('#exaggeration');
@@ -234,12 +241,104 @@ $('#sources').innerHTML =
   'Imagery: ' + IMAGERY.map((p) => esc(p.name)).join(', ') + '. Elevation: ' + DEM_LAYERS.map((l) => esc(l.name)).join(', ') +
   '. Pistes &amp; huts: © OpenStreetMap contributors. Slope angles are computed from elevation data and can miss small terrain features — always check the avalanche forecast.';
 
-const slopeLegend = $('#slope-legend');
-function renderSlopeLegend() {
-  slopeLegend.hidden = !settings.slope;
-  slopeLegend.innerHTML = SLOPE_CLASSES.map((c) => `<div><i style="background:rgb(${c.color.join(',')})"></i>${c.label}</div>`).join('');
+// ---------------------------------------------------------------- slope angle filter
+const slopePanel = $('#slope-panel');
+const slopeMin = $<HTMLInputElement>('#slope-min');
+const slopeMax = $<HTMLInputElement>('#slope-max');
+const aspectBtn = $('#slope-aspect-btn');
+const aspectBox = $('#slope-aspects');
+const rose = document.querySelector<SVGSVGElement>('#aspect-rose')!;
+const { min: DMIN, max: DMAX } = SLOPE_DOMAIN;
+const pct = (deg: number) => ((deg - DMIN) / (DMAX - DMIN)) * 100;
+const rgb = (c: [number, number, number]) => `rgb(${c.join(',')})`;
+
+for (const input of [slopeMin, slopeMax]) {
+  input.min = `${DMIN}`;
+  input.max = `${DMAX}`;
 }
-renderSlopeLegend();
+// Colour bar: the legend and the slider track in one.
+const stops = [{ min: DMIN, color: LOW_SLOPE_COLOR }, ...SLOPE_CLASSES];
+$('#slope-track').style.background = `linear-gradient(90deg, ${stops
+  .map((c, i) => `${rgb(c.color)} ${pct(c.min)}% ${i + 1 < stops.length ? pct(stops[i + 1].min) : 100}%`)
+  .join(', ')})`;
+$('#slope-ticks').innerHTML = [20, 30, 40, 50, DMAX]
+  .map((d) => `<span style="left:${pct(d)}%">${d === DMAX ? `${d}°+` : `${d}°`}</span>`)
+  .join('');
+
+// Compass rose of eight toggleable wedges, north up.
+const wedge = (i: number) => {
+  const a0 = ((i * 45 - 22.5 - 90) * Math.PI) / 180, a1 = ((i * 45 + 22.5 - 90) * Math.PI) / 180;
+  const p = (r: number, a: number) => `${(r * Math.cos(a)).toFixed(2)} ${(r * Math.sin(a)).toFixed(2)}`;
+  return `M${p(17, a0)} L${p(50, a0)} A50 50 0 0 1 ${p(50, a1)} L${p(17, a1)} A17 17 0 0 0 ${p(17, a0)}Z`;
+};
+rose.innerHTML =
+  ASPECTS.map((name, i) => {
+    const a = ((i * 45 - 90) * Math.PI) / 180;
+    return `<path class="wedge" data-aspect="${i}" d="${wedge(i)}" role="button" aria-label="${name}"></path>
+      <text x="${(34 * Math.cos(a)).toFixed(1)}" y="${(34 * Math.sin(a)).toFixed(1)}">${name}</text>`;
+  }).join('') + `<circle class="centre" r="15" data-aspect="all" role="button" aria-label="All aspects"></circle><text class="centre-label">All</text>`;
+
+let slopeTimer = 0;
+function setSlopeFilter(f: SlopeFilter, immediate = false) {
+  settings.slopeFilter = f;
+  save();
+  syncSlopePanel();
+  if (!settings.slope) setToggle('slope', true);
+  // Re-rendering is cheap (workers keep slope per tile) but debounce while a handle is dragged.
+  clearTimeout(slopeTimer);
+  const apply = () => (map.getSource('slope') as RasterTileSource | undefined)?.setTiles([slopeTileUrl(settings.slopeFilter)]);
+  if (immediate) apply();
+  else slopeTimer = window.setTimeout(apply, 180);
+}
+
+function syncSlopePanel() {
+  const f = settings.slopeFilter;
+  slopePanel.hidden = !settings.slope;
+  $('#btn-slope').setAttribute('aria-pressed', `${settings.slope}`);
+  slopeMin.value = `${f.min}`;
+  slopeMax.value = `${f.max}`;
+  slopePanel.querySelector<HTMLElement>('.mask.lo')!.style.width = `${pct(f.min)}%`;
+  slopePanel.querySelector<HTMLElement>('.mask.hi')!.style.width = `${100 - pct(f.max)}%`;
+  $('#slope-summary').textContent = describeFilter(f);
+  slopePanel.querySelectorAll<HTMLElement>('[data-preset]').forEach((b) => {
+    const [lo, hi] = b.dataset.preset!.split(',').map(Number);
+    b.setAttribute('aria-pressed', `${lo === f.min && hi === f.max}`);
+  });
+  rose.querySelectorAll<SVGPathElement>('.wedge').forEach((w) => w.classList.toggle('on', !!(f.aspects & (1 << +w.dataset.aspect!))));
+  aspectBtn.classList.toggle('on', (f.aspects & ALL_ASPECTS) !== ALL_ASPECTS);
+  document.documentElement.style.setProperty('--slope-panel-h', `${slopePanel.hidden ? 0 : slopePanel.offsetHeight}px`);
+}
+
+slopeMin.addEventListener('input', () => {
+  const v = Math.min(+slopeMin.value, settings.slopeFilter.max);
+  setSlopeFilter({ ...settings.slopeFilter, min: v });
+});
+slopeMax.addEventListener('input', () => {
+  const v = Math.max(+slopeMax.value, settings.slopeFilter.min);
+  setSlopeFilter({ ...settings.slopeFilter, max: v });
+});
+slopePanel.querySelectorAll<HTMLElement>('[data-preset]').forEach((b) =>
+  b.addEventListener('click', () => {
+    const [min, max] = b.dataset.preset!.split(',').map(Number);
+    setSlopeFilter({ ...settings.slopeFilter, min, max }, true);
+  }),
+);
+rose.addEventListener('click', (e) => {
+  const id = (e.target as Element).getAttribute('data-aspect');
+  if (id === null) return;
+  const f = settings.slopeFilter;
+  const aspects = id === 'all' ? ALL_ASPECTS : f.aspects ^ (1 << +id);
+  setSlopeFilter({ ...f, aspects }, true);
+});
+aspectBtn.addEventListener('click', () => {
+  aspectBox.hidden = !aspectBox.hidden;
+  aspectBtn.setAttribute('aria-expanded', `${!aspectBox.hidden}`);
+  syncSlopePanel();
+});
+$('#btn-slope').addEventListener('click', () => setToggle('slope', !settings.slope));
+$('#slope-close').addEventListener('click', () => setToggle('slope', false));
+new ResizeObserver(syncSlopePanel).observe(slopePanel);
+syncSlopePanel();
 
 // ---------------------------------------------------------------- camera controls
 $('#btn-zoom-in').addEventListener('click', () => map.zoomIn());
@@ -324,7 +423,24 @@ function statsHtml(p: Profile | null, kind: 'piste' | 'lift' | 'route') {
           [`${Math.round((Math.atan((p.max - p.min) / p.length) * 180) / Math.PI)}°`, 'Avg. pitch'],
         ];
   if (kind === 'lift') cells.splice(2, 1);
-  return `<div class="stats">${cells.map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('')}</div>`;
+  const stats = `<div class="stats">${cells.map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('')}</div>`;
+  return kind === 'lift' ? stats : stats + slopeMixHtml(p);
+}
+
+/** How much of the line crosses each slope class, as a bar plus the 30°+ / 35°+ distances. */
+function slopeMixHtml(p: Profile) {
+  const bands = distanceBySlope(p, SLOPE_CLASSES.map((c) => c.min));
+  const colors = [[176, 188, 202], ...SLOPE_CLASSES.map((c) => c.color)]; // neutral below 27°, as in the profile
+  const labels = ['under 27°', ...SLOPE_CLASSES.map((c) => c.label)];
+  const over = (deg: number) => bands.reduce((a, d, i) => a + (i > 0 && SLOPE_CLASSES[i - 1].min >= deg ? d : 0), 0);
+  const d30 = over(30), d35 = over(35);
+  const text = d30 < 1
+    ? 'No terrain of 30° or steeper on this line'
+    : `30°+ for ${fmtDist(d30)} (${Math.round((d30 / p.length) * 100)}%)` + (d35 >= 1 ? ` · 35°+ for ${fmtDist(d35)}` : '');
+  const bar = bands
+    .map((d, i) => (d > 0 ? `<i style="flex:${d.toFixed(1)};background:rgb(${colors[i].join(',')})" title="${labels[i]}: ${fmtDist(d)}"></i>` : ''))
+    .join('');
+  return `<div class="slope-mix" aria-label="Distance by slope angle">${bar}</div><div class="slope-mix-text">${text}</div>`;
 }
 
 /** Ski-touring time: 4 km/h on the flat, 400 m/h up, 1500 m/h down (Swiss/DAV rule of thumb). */
@@ -332,7 +448,8 @@ function tourTime(p: Profile) {
   const th = p.length / 4000;
   const tv = p.ascent / 400 + p.descent / 1500;
   const h = Math.max(th, tv) + Math.min(th, tv) / 2;
-  const hh = Math.floor(h), mm = Math.round((h - hh) * 60 / 5) * 5;
+  const mins = Math.max(5, Math.round((h * 60) / 5) * 5); // round the total, so 3 h 58 becomes 4h 00, not 3h 60
+  const hh = Math.floor(mins / 60), mm = mins % 60;
   return hh ? `${hh}h ${String(mm).padStart(2, '0')}` : `${mm} min`;
 }
 

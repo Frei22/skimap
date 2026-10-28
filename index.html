@@ -32,6 +32,9 @@
       <button id="btn-layers" class="ctl" title="Layers" aria-label="Layers">
         <svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/></svg>
       </button>
+      <button id="btn-slope" class="ctl" title="Slope angle" aria-label="Slope angle" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="M3 20h18L3 5z"/><path d="M8.5 20a6 6 0 0 0-2-4.4"/></svg>
+      </button>
       <button id="btn-route" class="ctl" title="Plan a route" aria-label="Plan a route">
         <svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8 17c5-1 2-7 8-10"/></svg>
       </button>
@@ -62,7 +65,7 @@
         </button>
       </div>
       <h3>Overlays</h3>
-      <label class="row"><span><b>Slope angle</b><small>Avalanche terrain ≥ 27°</small></span><input type="checkbox" data-toggle="slope" class="switch" /></label>
+      <label class="row"><span><b>Slope angle</b><small>Filter by angle and aspect</small></span><input type="checkbox" data-toggle="slope" class="switch" /></label>
       <label class="row"><span><b>Pistes &amp; lifts</b><small>OpenStreetMap, incl. ski-touring routes</small></span><input type="checkbox" data-toggle="pistes" class="switch" /></label>
       <label class="row"><span><b>Contour lines</b><small>Elevation every 10–200 m</small></span><input type="checkbox" data-toggle="contours" class="switch" /></label>
       <label class="row"><span><b>Place names</b><small>Peaks, villages, lakes</small></span><input type="checkbox" data-toggle="labels" class="switch" /></label>
@@ -84,7 +87,31 @@
       <p class="sources" id="sources"></p>
     </aside>
 
-    <div id="slope-legend" class="legend" hidden></div>
+    <section id="slope-panel" class="slope-panel" hidden aria-label="Slope angle filter">
+      <div class="slope-head">
+        <div class="grow"><b>Slope angle</b><small id="slope-summary"></small></div>
+        <button id="slope-aspect-btn" class="pill-btn" aria-expanded="false" aria-controls="slope-aspects" title="Filter by aspect">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m12 5 2.2 7H9.8z" fill="currentColor" stroke="none"/></svg>Aspect
+        </button>
+        <button id="slope-close" class="icon-btn" aria-label="Hide slope angle"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="range" id="slope-range">
+        <div class="range-track" id="slope-track"><i class="mask lo"></i><i class="mask hi"></i></div>
+        <input type="range" id="slope-min" step="1" aria-label="Lowest slope angle shown" />
+        <input type="range" id="slope-max" step="1" aria-label="Steepest slope angle shown" />
+      </div>
+      <div class="range-ticks" id="slope-ticks"></div>
+      <div class="slope-presets" role="group" aria-label="Presets">
+        <button data-preset="27,60">27°+</button>
+        <button data-preset="30,60">30°+</button>
+        <button data-preset="15,29">Under 30°</button>
+        <button data-preset="35,45">35–45°</button>
+      </div>
+      <div id="slope-aspects" class="aspect-picker" hidden>
+        <svg viewBox="-52 -52 104 104" id="aspect-rose" role="group" aria-label="Aspects"></svg>
+        <p class="muted">Tap the aspects to show, for example the ones the avalanche bulletin flags. The centre resets.</p>
+      </div>
+    </section>
     <div id="card" class="card" hidden></div>
     <div id="status" class="status" hidden></div>
     <div id="readout" class="readout" hidden></div>

@@ -1,10 +1,7 @@
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl';
-import { DEM_LAYERS, GLYPHS, IMAGERY, IMAGERY_MAXZOOM, LABELS_TILEJSON, TERRAIN_MAXZOOM } from './config';
-import { DEM_MAXZOOM } from './dem';
-import { IMAGERY_PROTOCOL } from './imagery';
-import { SLOPE_PROTOCOL } from './slope';
-
-export const DEM_PROTOCOL = 'ski-dem';
+import { DEM_LAYERS, DEM_MAXZOOM, GLYPHS, IMAGERY, IMAGERY_MAXZOOM, LABELS_TILEJSON, TERRAIN_MAXZOOM } from './config';
+import { DEM_PROTOCOL, IMAGERY_PROTOCOL } from './protocols';
+import { slopeTileUrl, type SlopeFilter } from './slope-filter';
 
 /**
  * With only the global DEM, MapLibre loads it directly (fastest path). With a regional high-res
@@ -83,7 +80,9 @@ export function imageryTiles(winter: boolean) {
   return [`${IMAGERY_PROTOCOL}://{z}/{x}/{y}?mode=${winter ? 'winter' : 'summer'}`];
 }
 
-export function buildStyle(t: Toggles, contourTiles: string, imageryTileSize: number, exaggeration: number): StyleSpecification {
+export function buildStyle(
+  t: Toggles, contourTiles: string, imageryTileSize: number, exaggeration: number, slopeFilter: SlopeFilter,
+): StyleSpecification {
   const vis = (on: boolean) => ({ visibility: on ? ('visible' as const) : ('none' as const) });
   const layers: LayerSpecification[] = [
     { id: 'background', type: 'background', paint: { 'background-color': '#dfe6ee' } },
@@ -274,7 +273,7 @@ export function buildStyle(t: Toggles, contourTiles: string, imageryTileSize: nu
       },
       dem: { ...demSource, attribution: DEM_LAYERS.map((l) => l.attribution).join(' · ') },
       'dem-hillshade': demSource,
-      slope: { type: 'raster', tiles: [`${SLOPE_PROTOCOL}://{z}/{x}/{y}`], tileSize: 256, minzoom: 8, maxzoom: DEM_MAXZOOM + 1 },
+      slope: { type: 'raster', tiles: [slopeTileUrl(slopeFilter)], tileSize: 256, minzoom: 8, maxzoom: DEM_MAXZOOM + 1 },
       contours: { type: 'vector', tiles: [contourTiles], maxzoom: 15, minzoom: 10 },
       labels: {
         type: 'vector', url: LABELS_TILEJSON,

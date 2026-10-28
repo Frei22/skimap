@@ -1,7 +1,7 @@
 // Elevation profile as inline SVG: the area under the line is coloured by the slope class of the terrain.
 import type { Profile } from './geo';
 import { aspectName, fmtDist, fmtEle } from './geo';
-import { SLOPE_CLASSES } from './slope';
+import { SLOPE_CLASSES } from './slope-filter';
 
 const W = 320, H = 110, PAD_L = 34, PAD_B = 16, PAD_T = 8;
 

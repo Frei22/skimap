@@ -2,11 +2,9 @@
 // high-resolution regional DEM with the global one, and upsamples beyond native zoom.
 // Shared by the 3D terrain, the slope overlay, the winter filter and point queries.
 import { PMTiles } from 'pmtiles';
-import { DEM_LAYERS, TERRAIN_MAXZOOM, type DemEncoding, type DemLayer } from './config';
+import { DEM_LAYERS, DEM_MAXZOOM, type DemEncoding, type DemLayer } from './config';
 import { Lru, TILE, decodePixels, lat2tileY, lng2tileX, metersPerPixel, tile2lat, tileBounds } from './tiles';
 
-export const DEM_MAXZOOM = Math.max(...DEM_LAYERS.map((l) => l.maxzoom));
-export { TERRAIN_MAXZOOM };
 const NODATA = -32768;
 
 type Fetcher = (z: number, x: number, y: number, signal?: AbortSignal) => Promise<Float32Array | null>;
