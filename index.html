@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f1720" />
+    <meta name="description" content="Free 3D ski map: winter imagery, slope angles, pistes and lifts for Chamonix, Riksgränsen and Hemavan." />
+    <title>Skimap — 3D ski touring map</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f1720'/%3E%3Cpath d='M4 25 13 9l5 8 3-4 7 12z' fill='%23fff'/%3E%3Cpath d='m13 9 2.6 4.2-2.6 1.6-2.4-1.4z' fill='%2393c5fd'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="map" aria-label="3D ski map"></div>
+
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="Skimap home">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3 26 13 8l5.5 9 3.2-4.4L29 26z" fill="currentColor"/><path d="m13 8 2.9 4.7-2.9 1.8-2.7-1.6z" fill="#93c5fd"/></svg>
+        <span>Skimap</span>
+      </a>
+      <div class="region-picker">
+        <button id="region-btn" class="pill" aria-haspopup="listbox" aria-expanded="false">
+          <span id="region-name">Chamonix</span>
+          <svg viewBox="0 0 24 24" class="chev" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+        </button>
+        <ul id="region-menu" class="menu" role="listbox" hidden></ul>
+      </div>
+    </header>
+
+    <nav class="controls" aria-label="Map controls">
+      <button id="btn-layers" class="ctl" title="Layers" aria-label="Layers">
+        <svg viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/></svg>
+      </button>
+      <button id="btn-route" class="ctl" title="Plan a route" aria-label="Plan a route">
+        <svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M8 17c5-1 2-7 8-10"/></svg>
+      </button>
+      <div class="ctl-group">
+        <button id="btn-zoom-in" class="ctl" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button id="btn-zoom-out" class="ctl" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+      </div>
+      <button id="btn-3d" class="ctl text" title="Toggle 2D / 3D" aria-label="Toggle 2D or 3D">2D</button>
+      <button id="btn-compass" class="ctl" title="Reset north" aria-label="Reset north">
+        <svg viewBox="0 0 24 24" id="compass-needle"><path d="m12 3 3.5 9h-7z" fill="#ef4444" stroke="none"/><path d="m12 21-3.5-9h7z" fill="currentColor" stroke="none" opacity=".55"/></svg>
+      </button>
+      <button id="btn-locate" class="ctl" title="My location" aria-label="My location">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="7"/></svg>
+      </button>
+    </nav>
+
+    <aside id="layers" class="sheet" hidden aria-label="Layers">
+      <div class="sheet-head">
+        <h2>Map</h2>
+        <button class="icon-btn" data-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="Season">
+        <button data-season="winter" role="radio">
+          <svg viewBox="0 0 24 24"><path d="M12 2v20M4.9 6l14.2 12M4.9 18 19.1 6"/></svg>Winter
+        </button>
+        <button data-season="summer" role="radio">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6 19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></svg>Summer
+        </button>
+      </div>
+      <h3>Overlays</h3>
+      <label class="row"><span><b>Slope angle</b><small>Avalanche terrain ≥ 27°</small></span><input type="checkbox" data-toggle="slope" class="switch" /></label>
+      <label class="row"><span><b>Pistes &amp; lifts</b><small>OpenStreetMap, incl. ski-touring routes</small></span><input type="checkbox" data-toggle="pistes" class="switch" /></label>
+      <label class="row"><span><b>Contour lines</b><small>Elevation every 10–200 m</small></span><input type="checkbox" data-toggle="contours" class="switch" /></label>
+      <label class="row"><span><b>Place names</b><small>Peaks, villages, lakes</small></span><input type="checkbox" data-toggle="labels" class="switch" /></label>
+      <label class="row"><span><b>Relief shading</b><small>Extra depth on flat views</small></span><input type="checkbox" data-toggle="hillshade" class="switch" /></label>
+      <h3>Terrain</h3>
+      <label class="row slider-row"><span><b>Exaggeration</b><small id="exag-val">1.0×</small></span><input type="range" id="exaggeration" min="1" max="2" step="0.1" value="1" /></label>
+      <label class="row"><span><b>Sharp imagery</b><small>Retina-quality tiles, uses more data</small></span><input type="checkbox" id="hd" class="switch" /></label>
+      <h3>Pistes</h3>
+      <ul class="piste-legend">
+        <li><i style="--c:#22a45d"></i>Green</li>
+        <li><i style="--c:#2468d8"></i>Blue</li>
+        <li><i style="--c:#e0312b"></i>Red</li>
+        <li><i style="--c:#121212"></i>Black</li>
+        <li><i class="dash" style="--c:#f07f1a"></i>Freeride</li>
+        <li><i class="dash" style="--c:#7b2fd0"></i>Ski touring</li>
+        <li><i class="lift"></i>Lift</li>
+        <li><i class="dot" style="--c:#0e8a8a"></i>Nordic</li>
+      </ul>
+      <p class="sources" id="sources"></p>
+    </aside>
+
+    <div id="slope-legend" class="legend" hidden></div>
+    <div id="card" class="card" hidden></div>
+    <div id="status" class="status" hidden></div>
+    <div id="readout" class="readout" hidden></div>
+    <div id="hint" class="hint" hidden></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

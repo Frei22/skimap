@@ -1,0 +1,33 @@
+{
+  "name": "skimap",
+  "version": "0.1.0",
+  "description": "Free 3D ski touring map with winter imagery, slope angles, pistes and lifts.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc",
+    "fetch-osm": "node scripts/fetch-osm.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Frei22/skimap.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Frei22/skimap/issues"
+  },
+  "homepage": "https://github.com/Frei22/skimap#readme",
+  "dependencies": {
+    "maplibre-contour": "^0.1.1",
+    "maplibre-gl": "^6.16.0",
+    "pmtiles": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/geojson": "^7946.0.16",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.5"
+  },
+  "private": true,
+  "type": "module",
+  "license": "MIT"
+}
