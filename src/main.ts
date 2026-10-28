@@ -59,8 +59,14 @@ maplibregl.setWorkerUrl(workerUrl);
 // Our protocol tiles wait on workers, not the network; a deep queue keeps them from starving the DEM.
 maplibregl.setMaxParallelImageRequests(64);
 
+// Contours come from the global DEM (maplibre-contour fetches it directly in its own worker).
 const globalDem = DEM_LAYERS[DEM_LAYERS.length - 1];
-const contourDem = new mlcontour.DemSource({ url: globalDem.url, encoding: globalDem.encoding, maxzoom: globalDem.maxzoom, worker: true });
+const contourDem = new mlcontour.DemSource({
+  url: [globalDem.url].flat()[0],
+  encoding: globalDem.encoding === 'mapbox' ? 'mapbox' : 'terrarium',
+  maxzoom: globalDem.maxzoom,
+  worker: true,
+});
 contourDem.setupMaplibre(maplibregl);
 const contourTiles = contourDem.contourProtocolUrl({
   multiplier: 1,
@@ -119,6 +125,10 @@ function loadVisibleOsm() {
   );
 }
 map.on('load', loadVisibleOsm);
+// On phones the expanded attribution covers a lot of map; start it collapsed behind its (i) button.
+map.on('load', () => {
+  if (matchMedia('(max-width: 640px)').matches) document.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
+});
 map.on('moveend', loadVisibleOsm);
 
 // ---------------------------------------------------------------- region picker

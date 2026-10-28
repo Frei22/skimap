@@ -1,5 +1,5 @@
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl';
-import { DEM_LAYERS, GLYPHS, IMAGERY, IMAGERY_MAXZOOM, LABELS_TILEJSON } from './config';
+import { DEM_LAYERS, GLYPHS, IMAGERY, IMAGERY_MAXZOOM, LABELS_TILEJSON, TERRAIN_MAXZOOM } from './config';
 import { DEM_MAXZOOM } from './dem';
 import { IMAGERY_PROTOCOL } from './imagery';
 import { SLOPE_PROTOCOL } from './slope';
@@ -10,7 +10,14 @@ export const DEM_PROTOCOL = 'ski-dem';
  * With only the global DEM, MapLibre loads it directly (fastest path). With a regional high-res
  * DEM configured, tiles go through our protocol, which merges the layers.
  */
-const demTiles = DEM_LAYERS.length === 1 ? [DEM_LAYERS[0].url] : [`${DEM_PROTOCOL}://{z}/{x}/{y}`];
+const direct = DEM_LAYERS.length === 1 && DEM_LAYERS[0].encoding !== 'bil32' ? DEM_LAYERS[0] : null;
+const demSource = {
+  type: 'raster-dem' as const,
+  tiles: direct ? [direct.url].flat() : [`${DEM_PROTOCOL}://{z}/{x}/{y}`],
+  tileSize: 256,
+  maxzoom: Math.min(DEM_MAXZOOM, TERRAIN_MAXZOOM),
+  encoding: direct ? (direct.encoding as 'terrarium' | 'mapbox') : ('terrarium' as const),
+};
 
 export const DIFFICULTY_COLORS: Record<string, string> = {
   novice: '#22a45d',
@@ -41,7 +48,7 @@ const difficultyColor: ExpressionSpecification = [
 ] as unknown as ExpressionSpecification;
 
 const lineWidth = (base: number): ExpressionSpecification =>
-  ['interpolate', ['exponential', 1.6], ['zoom'], 11, base * 0.8, 14, base * 2.2, 17, base * 6];
+  ['interpolate', ['exponential', 1.5], ['zoom'], 10, base * 0.9, 12, base * 1.4, 14, base * 2.2, 16, base * 3.6, 18, base * 6]
 
 const LINES: ExpressionSpecification = ['in', ['geometry-type'], ['literal', ['LineString', 'MultiLineString']]];
 const POLYS: ExpressionSpecification = ['in', ['geometry-type'], ['literal', ['Polygon', 'MultiPolygon']]];
@@ -95,7 +102,7 @@ export function buildStyle(t: Toggles, contourTiles: string, imageryTileSize: nu
     },
     {
       id: 'slope', type: 'raster', source: 'slope', layout: vis(t.slope),
-      paint: { 'raster-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.7, 15, 0.55], 'raster-resampling': 'linear', 'raster-fade-duration': 0 },
+      paint: { 'raster-opacity': ['interpolate', ['linear'], ['zoom'], 10, 0.62, 15, 0.5], 'raster-resampling': 'linear', 'raster-fade-duration': 0 },
     },
     {
       id: 'contour-minor', type: 'line', source: 'contours', 'source-layer': 'contours', layout: vis(t.contours),
@@ -125,39 +132,39 @@ export function buildStyle(t: Toggles, contourTiles: string, imageryTileSize: nu
     {
       id: 'piste-casing', type: 'line', source: 'osm', layout: { ...vis(t.pistes), 'line-cap': 'round', 'line-join': 'round' },
       filter: ['all', ['==', ['get', 'kind'], 'piste'], ['==', ['get', 'piste'], 'downhill'], LINES],
-      paint: { 'line-color': 'rgba(255,255,255,0.85)', 'line-width': lineWidth(2.1), 'line-blur': 0.5 },
+      paint: { 'line-color': 'rgba(255,255,255,0.85)', 'line-width': lineWidth(2.5), 'line-blur': 0.5 },
     },
     {
       id: 'piste-line', type: 'line', source: 'osm', layout: { ...vis(t.pistes), 'line-cap': 'round', 'line-join': 'round' },
       filter: ['all', ['==', ['get', 'kind'], 'piste'], ['==', ['get', 'piste'], 'downhill'], LINES],
       paint: {
         'line-color': difficultyColor,
-        'line-width': lineWidth(1.3),
+        'line-width': lineWidth(1.5),
         'line-dasharray': ['match', ['get', 'difficulty'], ['freeride', 'expert', 'extreme'], ['literal', [2, 1.4]], ['literal', [1, 0]]],
       },
     },
     {
       id: 'skitour-line', type: 'line', source: 'osm', layout: { ...vis(t.pistes), 'line-cap': 'round', 'line-join': 'round' },
       filter: ['all', ['==', ['get', 'kind'], 'piste'], ['==', ['get', 'piste'], 'skitour'], LINES],
-      paint: { 'line-color': '#7b2fd0', 'line-width': lineWidth(1.1), 'line-dasharray': [2.5, 1.5] },
+      paint: { 'line-color': '#7b2fd0', 'line-width': lineWidth(1.3), 'line-dasharray': [2.5, 1.5] },
     },
     {
       id: 'nordic-line', type: 'line', source: 'osm', layout: { ...vis(t.pistes), 'line-cap': 'round' },
       minzoom: 12,
       filter: ['all', ['==', ['get', 'kind'], 'piste'], ['in', ['get', 'piste'], ['literal', ['nordic', 'sled']]]],
-      paint: { 'line-color': '#0e8a8a', 'line-width': lineWidth(0.8), 'line-dasharray': [0.6, 1.4] },
+      paint: { 'line-color': '#0e8a8a', 'line-width': lineWidth(1), 'line-dasharray': [0.6, 1.4] },
     },
     {
       id: 'lift-casing', type: 'line', source: 'osm', layout: { ...vis(t.pistes), 'line-cap': 'round' },
       filter: ['==', ['get', 'kind'], 'lift'],
-      paint: { 'line-color': 'rgba(255,255,255,0.9)', 'line-width': lineWidth(1.6) },
+      paint: { 'line-color': 'rgba(255,255,255,0.9)', 'line-width': lineWidth(2.2) },
     },
     {
       id: 'lift-line', type: 'line', source: 'osm', layout: { ...vis(t.pistes), 'line-cap': 'round' },
       filter: ['==', ['get', 'kind'], 'lift'],
       paint: {
         'line-color': '#1b1d22',
-        'line-width': lineWidth(0.7),
+        'line-width': lineWidth(1),
         'line-dasharray': ['match', ['get', 'lift'], ['drag_lift', 't-bar', 'j-bar', 'platter', 'rope_tow', 'magic_carpet'], ['literal', [3, 1.5]], ['literal', [1, 0]]],
       },
     },
@@ -265,14 +272,8 @@ export function buildStyle(t: Toggles, contourTiles: string, imageryTileSize: nu
         type: 'raster', tiles: imageryTiles(t.winter), tileSize: imageryTileSize, maxzoom: IMAGERY_MAXZOOM,
         attribution: imageryAttribution,
       },
-      dem: {
-        type: 'raster-dem', tiles: demTiles, tileSize: 256, maxzoom: DEM_MAXZOOM,
-        encoding: DEM_LAYERS.length === 1 ? DEM_LAYERS[0].encoding : 'terrarium', attribution: DEM_LAYERS.map((l) => l.attribution).join(' · '),
-      },
-      'dem-hillshade': {
-        type: 'raster-dem', tiles: demTiles, tileSize: 256, maxzoom: DEM_MAXZOOM,
-        encoding: DEM_LAYERS.length === 1 ? DEM_LAYERS[0].encoding : 'terrarium',
-      },
+      dem: { ...demSource, attribution: DEM_LAYERS.map((l) => l.attribution).join(' · ') },
+      'dem-hillshade': demSource,
       slope: { type: 'raster', tiles: [`${SLOPE_PROTOCOL}://{z}/{x}/{y}`], tileSize: 256, minzoom: 8, maxzoom: DEM_MAXZOOM + 1 },
       contours: { type: 'vector', tiles: [contourTiles], maxzoom: 15, minzoom: 10 },
       labels: {

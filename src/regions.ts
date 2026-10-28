@@ -17,7 +17,7 @@ export const REGIONS: Region[] = [
     country: 'FR',
     bbox: [6.74, 45.8, 7.06, 46.06],
     camera: { center: [6.885, 45.885], zoom: 12.6, pitch: 68, bearing: 155 },
-    snowline: 950,
+    snowline: 750,
     avalanche: { name: 'Météo-France BRA', url: 'https://meteofrance.com/meteo-montagne/alpes-du-nord/risques-avalanche' },
   },
   {

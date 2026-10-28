@@ -1,14 +1,12 @@
 // `ski-imagery://z/x/y?mode=winter|summer` — a mosaic of the best orthophoto per tile, optionally
 // turned into a winter scene (snow cover from elevation + slope, frosted forest, low-sun shading).
 import { IMAGERY, type ImageryProvider } from './config';
-import { SUN_ALT, terrainForTile } from './dem';
+import { FLAT_SHADE, terrainForTile } from './dem';
 import { snowlineAt } from './regions';
 import { TILE, clamp, decodePixels, encodePixels, parseTileUrl, smoothstep, tileBounds } from './tiles';
 
 export const IMAGERY_PROTOCOL = 'ski-imagery';
 
-/** Illumination of flat ground — snow shading is relative to this. */
-const FLAT_SUN = Math.sin(SUN_ALT);
 
 function covers(p: ImageryProvider, z: number, x: number, y: number) {
   if (z < p.minzoom) return false;
@@ -38,17 +36,20 @@ async function fetchProviderPixels(p: ImageryProvider, z: number, x: number, y: 
   return ctx.getImageData(0, 0, TILE, TILE).data;
 }
 
-const isHole = (px: Uint8ClampedArray, p: number) =>
-  px[p + 3] < 8 || (px[p] > 253 && px[p + 1] > 253 && px[p + 2] > 253);
-
-/** Fraction of "no data" pixels (transparent or the pure white providers use outside coverage). */
-function holeFraction(px: Uint8ClampedArray) {
-  let holes = 0, n = 0;
-  for (let p = 0; p < px.length; p += 4 * 7) {
-    n++;
-    if (isHole(px, p)) holes++;
+/**
+ * No-data mask for a provider tile: transparent pixels, plus pure white for providers that paint
+ * areas outside their coverage white. (Only for those: pure white is also sunlit glacier.)
+ */
+function holeMask(px: Uint8ClampedArray, p: ImageryProvider) {
+  const mask = new Uint8Array(px.length / 4);
+  let holes = 0;
+  for (let i = 0, q = 0; i < mask.length; i++, q += 4) {
+    if (px[q + 3] < 8 || (p.whiteIsNoData && px[q] >= 254 && px[q + 1] >= 254 && px[q + 2] >= 254)) {
+      mask[i] = 1;
+      holes++;
+    }
   }
-  return holes / n;
+  return { mask, holes };
 }
 
 /** Near-uniform tiles (e.g. "no imagery here" placeholders) count as missing. */
@@ -82,22 +83,28 @@ async function tryProvider(p: ImageryProvider, z: number, x: number, y: number, 
 async function mosaic(z: number, x: number, y: number, signal: AbortSignal) {
   const candidates = IMAGERY.filter((p) => covers(p, z, x, y));
   let out: Uint8ClampedArray | null = null;
+  let mask: Uint8Array | null = null;
+  let holes = 0;
   for (const p of candidates) {
     const px = await tryProvider(p, z, x, y, Math.min(z, p.maxzoom), signal);
     if (!px) continue;
-    if (!out) {
+    const m = holeMask(px, p);
+    if (!out || !mask) {
+      ({ mask, holes } = m);
       out = px;
     } else {
-      for (let i = 0; i < out.length; i += 4) {
-        if (isHole(out, i) && !isHole(px, i)) {
-          out[i] = px[i];
-          out[i + 1] = px[i + 1];
-          out[i + 2] = px[i + 2];
-          out[i + 3] = 255;
+      for (let i = 0, q = 0; i < mask.length; i++, q += 4) {
+        if (mask[i] && !m.mask[i]) {
+          out[q] = px[q];
+          out[q + 1] = px[q + 1];
+          out[q + 2] = px[q + 2];
+          out[q + 3] = 255;
+          mask[i] = 0;
+          holes--;
         }
       }
     }
-    if (holeFraction(out) < 0.1) break;
+    if (holes < 50) break; // a few stray pixels aren't worth another download
   }
   for (const p of candidates) {
     if (out) break;
@@ -129,26 +136,27 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
     const L = 0.299 * r + 0.587 * g + 0.114 * bl;
     const greenness = g - (r + bl) / 2;
 
+    // Lakes: flat and blue-green. Above the snowline they're frozen and snowed over.
+    const water = (1 - smoothstep(2, 5, slope[i])) * clamp((bl - r) * 10) * clamp((g - r) * 10 + 0.5);
     // Forest: dark and green-ish (shadows are blue-ish, so they don't count).
-    const tree = clamp((0.36 - L) / 0.16) * clamp((greenness + 0.005) * 25);
-    // Snow holds on open ground above the snowline and on anything not cliff-steep.
+    const tree = clamp((0.36 - L) / 0.16) * clamp((greenness + 0.005) * 25) * (1 - water);
+    // Snow holds on open ground above the snowline and on anything not cliff-steep. Dark, non-green
+    // pixels on steep ground are rock faces: the DEM smooths cliffs out, so the photo gets a say.
     const above = smoothstep(snowline - 250, snowline + 250, elevation[i]);
     const s = slope[i];
-    const stick = 1 - smoothstep(46, 62, s);
+    const rock = clamp((0.55 - L) / 0.25) * (1 - clamp(greenness * 15));
+    const stick = (1 - smoothstep(46, 62, s)) * (1 - rock) + (1 - smoothstep(30, 46, s)) * rock;
     const snow = above * stick * (1 - 0.8 * tree);
 
-    // Snow colour: 1 on flat ground, brighter facing the sun, cold blue in shade.
-    const v = clamp(0.9 + 0.6 * (shade[i] - FLAT_SUN), 0.42, 1.04);
-    const tex = 1 + detail * 0.35 * (L - 0.45);
-    const sr = (v - (1 - v) * 0.16) * tex;
-    const sg = (v - (1 - v) * 0.05) * tex;
-    const sb = (v + (1 - v) * 0.22) * tex;
+    // Snow, shaded by the terrain, with the photo's luminance kept as fine texture.
+    const [sr, sg, sb] = snowColour(shade[i], 1 + detail * 0.35 * (L - 0.45));
 
-    // Ground that isn't snowed in: cooler, less saturated, a bit darker.
+    // Ground that isn't snowed in: cooler, less saturated, a bit darker (forest keeps more green).
     const gray = L;
-    let gr = (gray + (r - gray) * 0.55) * 0.88, gg = (gray + (g - gray) * 0.55) * 0.9, gb = (gray + (bl - gray) * 0.55) * 0.96 + 0.02;
+    const sat = 0.55 + 0.25 * tree;
+    let gr = (gray + (r - gray) * sat) * 0.86, gg = (gray + (g - gray) * sat) * 0.9, gb = (gray + (bl - gray) * sat) * 0.94 + 0.02;
     // Frosted forest.
-    const frost = 0.18 * above;
+    const frost = 0.2 * above;
     gr = gr + (0.85 - gr) * frost * tree;
     gg = gg + (0.88 - gg) * frost * tree;
     gb = gb + (0.95 - gb) * frost * tree;
@@ -161,7 +169,13 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
   return px;
 }
 
-/** No imagery anywhere (offline provider, gap in coverage): draw the terrain itself as a winter relief. */
+/** Snow colour for a relative illumination: near-white on flat ground, cold blue in shade. */
+function snowColour(shade: number, tex: number): [number, number, number] {
+  const v = clamp(0.93 + 0.95 * (shade - FLAT_SHADE), 0.4, 1.05);
+  return [(v - (1 - v) * 0.16) * tex, (v - (1 - v) * 0.05) * tex, (v + (1 - v) * 0.22) * tex];
+}
+
+/** No imagery anywhere (offline provider, gap in coverage): draw the terrain itself as a shaded relief. */
 async function syntheticRelief(z: number, x: number, y: number, winter: boolean) {
   const t = await terrainForTile(z, x, y, true);
   if (!t) return null;
@@ -169,16 +183,16 @@ async function syntheticRelief(z: number, x: number, y: number, winter: boolean)
   const snowline = winter ? snowlineAt((b.west + b.east) / 2, (b.north + b.south) / 2) : 2900;
   const px = new Uint8ClampedArray(TILE * TILE * 4);
   for (let i = 0, p = 0; i < t.elevation.length; i++, p += 4) {
-    const h = t.elevation[i];
-    // Base land colour by elevation: valley green → alpine meadow → rock.
-    const rock = smoothstep(1800, 2600, h) * 0.6 + smoothstep(38, 55, t.slope[i]) * 0.6;
-    const r0 = 0.42 + 0.2 * clamp(rock), g0 = 0.5 + 0.1 * clamp(rock), b0 = 0.36 + 0.24 * clamp(rock);
-    const snow = smoothstep(snowline - 250, snowline + 250, h) * (1 - smoothstep(46, 62, t.slope[i]));
-    const lit = 0.45 + 0.55 * t.shade[i];
-    const sr = 0.66 + 0.34 * lit, sg = 0.72 + 0.28 * lit, sb = 0.84 + 0.16 * lit;
-    px[p] = 255 * clamp((r0 * lit) * (1 - snow) + sr * snow);
-    px[p + 1] = 255 * clamp((g0 * lit) * (1 - snow) + sg * snow);
-    px[p + 2] = 255 * clamp((b0 * lit) * (1 - snow) + sb * snow);
+    const h = t.elevation[i], s = t.slope[i];
+    // Land colour by elevation and steepness: valley green → alpine meadow → rock.
+    const rock = clamp(smoothstep(1800, 2600, h) * 0.6 + smoothstep(38, 55, s) * 0.6);
+    const lit = clamp(0.75 + 0.9 * (t.shade[i] - FLAT_SHADE), 0.3, 1.1);
+    const land = [(0.42 + 0.2 * rock) * lit, (0.5 + 0.1 * rock) * lit, (0.36 + 0.24 * rock) * lit];
+    const snow = smoothstep(snowline - 250, snowline + 250, h) * (1 - smoothstep(46, 62, s));
+    const sc = snowColour(t.shade[i], 1);
+    px[p] = 255 * clamp(land[0] + (sc[0] - land[0]) * snow);
+    px[p + 1] = 255 * clamp(land[1] + (sc[1] - land[1]) * snow);
+    px[p + 2] = 255 * clamp(land[2] + (sc[2] - land[2]) * snow);
     px[p + 3] = 255;
   }
   return px;

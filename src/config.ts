@@ -1,37 +1,69 @@
 // Data sources. Everything here is free to use; see DATA.md for licences and how to add better data.
 
-export type DemEncoding = 'terrarium' | 'mapbox';
+export type DemEncoding = 'terrarium' | 'mapbox' | 'bil32';
 
 export type DemLayer = {
   name: string;
-  /** XYZ template (`https://…/{z}/{x}/{y}.png`) or `pmtiles://https://…/file.pmtiles` */
-  url: string;
+  /**
+   * Tile URL template(s): XYZ (`{z}/{x}/{y}`), WMS (`{bbox-epsg-3857}`) or `pmtiles://https://…`.
+   * Several templates for the same data are used round-robin (more parallel downloads).
+   */
+  url: string | string[];
+  /** terrarium/mapbox: RGB-encoded PNG. bil32: raw little-endian float32 grid (IGN WMS). */
   encoding: DemEncoding;
   minzoom: number;
   maxzoom: number;
+  /**
+   * True ground resolution of the data in metres. Tiles are often served at a finer zoom than
+   * the data (Mapzen's 25 m EU-DEM is linearly interpolated up to z14); reading them at their
+   * real resolution and upsampling smoothly avoids striped slope & snow shading.
+   */
+  resolution?: number;
   bounds?: [number, number, number, number];
   attribution: string;
 };
 
-const env = import.meta.env;
+// Also loaded by Node scripts (scripts/*.ts), where import.meta.env doesn't exist.
+const env: Record<string, string | undefined> = import.meta.env ?? {};
 
 /**
  * Elevation layers, best first. The last one must cover the whole world.
- * A high-resolution regional DEM (e.g. IGN RGE ALTI 1 m for Chamonix, built with
- * scripts/build-dem.sh) can be prepended via VITE_DEM_LAYERS (JSON array of DemLayer).
+ * More regional layers (e.g. a Lantmäteriet 1 m DEM for Sweden built with scripts/build-dem.sh)
+ * can be prepended via VITE_DEM_LAYERS (JSON array of DemLayer).
  */
 export const DEM_LAYERS: DemLayer[] = [
   ...(env.VITE_DEM_LAYERS ? (JSON.parse(env.VITE_DEM_LAYERS) as DemLayer[]) : []),
+  ...(env.VITE_IGN_DEM === 'off'
+    ? []
+    : [
+        {
+          name: 'IGN RGE ALTI 1 m',
+          url: 'https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ELEVATION.ELEVATIONGRIDCOVERAGE.HIGHRES&STYLES=&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&WIDTH=256&HEIGHT=256&FORMAT=image/x-bil;bits=32',
+          encoding: 'bil32' as const,
+          minzoom: 11,
+          maxzoom: 16,
+          resolution: 1,
+          bounds: [-5.2, 41.3, 9.6, 51.1] as [number, number, number, number],
+          attribution: '<a href="https://geoservices.ign.fr/rgealti" target="_blank">Elevation: IGN RGE ALTI</a>',
+        },
+      ]),
   {
     name: 'Mapzen Terrain Tiles (AWS Open Data)',
-    url: 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
+    url: [
+      'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png',
+      'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png',
+    ],
     encoding: 'terrarium',
     minzoom: 0,
     maxzoom: 14,
+    resolution: 25, // EU-DEM in Europe; SRTM (30 m) elsewhere
     attribution:
       '<a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank">Terrain: Mapzen, EU-DEM, SRTM</a>',
   },
 ];
+
+/** 3D terrain mesh detail stops here; beyond it, more DEM detail only feeds slope & snow shading. */
+export const TERRAIN_MAXZOOM = 15;
 
 export type ImageryProvider = {
   id: string;
@@ -41,6 +73,8 @@ export type ImageryProvider = {
   /** Highest zoom the provider serves; above that we crop & upscale its tiles. */
   maxzoom: number;
   bounds?: [number, number, number, number];
+  /** Provider paints areas outside its coverage pure white (rather than transparent). */
+  whiteIsNoData?: boolean;
   attribution: string;
 };
 
@@ -56,6 +90,7 @@ export const IMAGERY: ImageryProvider[] = [
     minzoom: 9,
     maxzoom: 19,
     bounds: [-5.2, 41.3, 9.6, 51.1],
+    whiteIsNoData: true,
     attribution: '<a href="https://geoservices.ign.fr/" target="_blank">© IGN</a>',
   },
   {
@@ -65,6 +100,7 @@ export const IMAGERY: ImageryProvider[] = [
     minzoom: 9,
     maxzoom: 19,
     bounds: [5.95, 45.81, 10.5, 47.81],
+    whiteIsNoData: true,
     attribution: '<a href="https://www.swisstopo.admin.ch/" target="_blank">© swisstopo</a>',
   },
   ...(env.VITE_SE_ORTHO_URL
