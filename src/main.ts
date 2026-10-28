@@ -139,7 +139,7 @@ function renderRegions() {
   $('#region-name').textContent = region.name;
   regionMenu.innerHTML = REGIONS.map(
     (r) => `<li><button role="option" data-region="${r.id}" aria-selected="${r.id === region.id}">
-      <span class="flag">${FLAGS[r.country] ?? '🏔'}</span><span><b>${esc(r.name)}</b><small>${r.country === 'FR' ? 'Alps · France' : 'Lapland · Sweden'}</small></span>
+      <span class="flag">${FLAGS[r.country] ?? '🏔'}</span><span><b>${esc(r.name)}</b><small>${esc(r.subtitle)}</small></span>
     </button></li>`,
   ).join('');
 }

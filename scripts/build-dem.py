@@ -13,7 +13,10 @@ GitHub Releases, the site itself) and add it to VITE_DEM_LAYERS, e.g.
 
 Usage:
   pip install rasterio numpy pillow pmtiles
-  python scripts/build-dem.py -o lapland.pmtiles --maxzoom 16 --bbox 17.9 68.3 18.5 68.6 dem/*.tif
+  python scripts/build-dem.py -o lapland.pmtiles --maxzoom 15 --bbox 17.9 68.3 18.5 68.6 dem/*.tif
+
+Choosing --maxzoom: a z15 pixel is ~1.8 m in Lapland (68°N) and ~3.3 m in the Alps (46°N); z16 halves
+that. For 1 m data use 15 in Lapland and 16 in the Alps.
 
 Inputs can be in any CRS and may overlap (earlier files win). No-data is written as
 Terrarium (0,0,0), which the app fills from the global elevation model.
@@ -24,6 +27,7 @@ import math
 import os
 import sys
 import tempfile
+import warnings
 
 import numpy as np
 import rasterio
@@ -55,10 +59,10 @@ def lat2y(lat, z):
     return int((1 - math.log(math.tan(r) + 1 / math.cos(r)) / math.pi) / 2 * 2**z)
 
 
-def encode_terrarium(h):
-    """float32 metres (NaN = no data) → RGB PNG bytes."""
+def encode_terrarium(h, precision):
+    """float32 metres (NaN = no data) → RGB PNG bytes. Rounding to `precision` shrinks the PNGs a lot."""
     valid = ~np.isnan(h)
-    v = np.where(valid, h, 0) + 32768.0
+    v = np.round(np.where(valid, h, 0) / precision) * precision + 32768.0
     r = np.floor(v / 256)
     g = np.floor(v) % 256
     b = np.floor((v - np.floor(v)) * 256)
@@ -114,7 +118,8 @@ def downsample(children):
     if np.isnan(full).all():
         return None
     blocks = full.reshape(TILE, 2, TILE, 2)
-    with np.errstate(invalid='ignore'):
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)  # all-NaN blocks → NaN, as intended
         return np.nanmean(blocks, axis=(1, 3)).astype(np.float32)
 
 
@@ -125,6 +130,7 @@ def main():
     ap.add_argument('--minzoom', type=int, default=10)
     ap.add_argument('--maxzoom', type=int, default=16)
     ap.add_argument('--bbox', type=float, nargs=4, metavar=('W', 'S', 'E', 'N'), help='limit to this lng/lat box')
+    ap.add_argument('--precision', type=float, default=0.1, help='vertical precision in metres (default 0.1)')
     args = ap.parse_args()
 
     sources = Sources(args.inputs)
@@ -138,7 +144,7 @@ def main():
     def save(z, x, y, h):
         path = os.path.join(tmp, f'{z}-{x}-{y}.png')
         with open(path, 'wb') as f:
-            f.write(encode_terrarium(h))
+            f.write(encode_terrarium(h, args.precision))
         written.append((zxy_to_tileid(z, x, y), path))
         counts[z] = counts.get(z, 0) + 1
 

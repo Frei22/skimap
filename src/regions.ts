@@ -1,6 +1,8 @@
 export type Region = {
   id: string;
   name: string;
+  /** Shown under the name in the region picker. */
+  subtitle: string;
   country: string;
   /** [west, south, east, north] — area we fetch pistes/lifts for */
   bbox: [number, number, number, number];
@@ -14,6 +16,7 @@ export const REGIONS: Region[] = [
   {
     id: 'chamonix',
     name: 'Chamonix Mont-Blanc',
+    subtitle: 'Alps · France',
     country: 'FR',
     bbox: [6.74, 45.8, 7.06, 46.06],
     camera: { center: [6.885, 45.885], zoom: 12.6, pitch: 68, bearing: 155 },
@@ -23,15 +26,17 @@ export const REGIONS: Region[] = [
   {
     id: 'riksgransen',
     name: 'Riksgränsen',
+    subtitle: 'Lapland · Sweden',
     country: 'SE',
     bbox: [17.98, 68.36, 18.36, 68.5],
-    camera: { center: [18.125, 68.415], zoom: 13.1, pitch: 66, bearing: 200 },
+    camera: { center: [18.12, 68.412], zoom: 13.2, pitch: 64, bearing: 12 },
     snowline: 0,
     avalanche: { name: 'Lavinprognoser.se', url: 'https://lavinprognoser.se/' },
   },
   {
     id: 'hemavan',
     name: 'Hemavan Tärnaby',
+    subtitle: 'Lapland · Sweden',
     country: 'SE',
     bbox: [14.94, 65.74, 15.3, 65.9],
     camera: { center: [15.09, 65.795], zoom: 13.1, pitch: 66, bearing: 320 },
