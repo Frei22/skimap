@@ -56,9 +56,10 @@ jobs:
         timeout-minutes: 15
         continue-on-error: true # keeps the restored data; the app can also query Overpass live
         env:
-          # With last week's data in hand, one quick try per region is enough.
-          OVERPASS_ATTEMPTS: ${{ steps.osmcache.outputs.cache-matched-key != '' && '1' || '3' }}
-          OVERPASS_TIMEOUT_S: ${{ steps.osmcache.outputs.cache-matched-key != '' && '60' || '170' }}
+          # With earlier data in hand, two quick tries on the main server per region are enough.
+          OVERPASS_ATTEMPTS: ${{ steps.osmcache.outputs.cache-matched-key != '' && '2' || '3' }}
+          OVERPASS_TIMEOUT_S: ${{ steps.osmcache.outputs.cache-matched-key != '' && '90' || '170' }}
+          OVERPASS_MIRRORS: ${{ steps.osmcache.outputs.cache-matched-key != '' && 'off' || 'on' }}
       - name: Save piste data
         if: hashFiles('public/data/osm/**') != ''
         uses: actions/cache/save@v4

@@ -12,23 +12,55 @@ import { lat2tileY, lng2tileX, tileBounds } from '../src/tiles';
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'data', 'osm', `${CELL_ZOOM}`);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const MAIN = OVERPASS_ENDPOINTS[0];
+
+/**
+ * overpass-api.de gives each client a couple of query slots and a cool-down after a big query; a
+ * query sent too early is refused at once (429/502). Its status page says when the next slot frees.
+ */
+async function waitForSlot() {
+  try {
+    const status = await (await fetch(MAIN.replace('/interpreter', '/status'), { signal: AbortSignal.timeout(15_000) })).text();
+    if (/slots? available now/.test(status)) return;
+    const waits = [...status.matchAll(/in (\d+) seconds/g)].map((m) => Number(m[1]));
+    const wait = Math.min(120, waits.length ? Math.min(...waits) + 2 : 20);
+    console.log(`  waiting ${wait} s for an Overpass slot`);
+    await sleep(wait * 1000);
+  } catch {
+    await sleep(10_000);
+  }
+}
+
+async function post(url: string, query: string, timeoutS: number) {
+  const res = await fetch(url, {
+    method: 'POST',
+    body: 'data=' + encodeURIComponent(query),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'skimap-prefetch/1.0' },
+    signal: AbortSignal.timeout(timeoutS * 1000), // a stalled server must not hang the deploy
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as { elements: Parameters<typeof osmToFeatures>[0] };
+}
+
+/** The main server, waiting for a free slot before each try; the (slower) mirrors as a last resort. */
 async function overpass(query: string) {
   const attempts = Number(process.env.OVERPASS_ATTEMPTS ?? 3);
+  const timeoutS = Number(process.env.OVERPASS_TIMEOUT_S ?? 170);
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const url = OVERPASS_ENDPOINTS[attempt % OVERPASS_ENDPOINTS.length];
+    await waitForSlot();
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        body: 'data=' + encodeURIComponent(query),
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'skimap-prefetch/1.0' },
-        signal: AbortSignal.timeout(Number(process.env.OVERPASS_TIMEOUT_S ?? 170) * 1000), // a stalled server must not hang the deploy
-      });
-      if (res.ok) return (await res.json()) as { elements: Parameters<typeof osmToFeatures>[0] };
-      console.warn(`  ${url} → ${res.status}`);
+      return await post(MAIN, query, timeoutS);
+    } catch (e) {
+      console.warn(`  ${MAIN} → ${(e as Error).message}`);
+    }
+  }
+  const mirrors = process.env.OVERPASS_MIRRORS === 'off' ? [] : OVERPASS_ENDPOINTS.slice(1);
+  for (const url of mirrors) {
+    try {
+      return await post(url, query, Math.min(timeoutS, 90));
     } catch (e) {
       console.warn(`  ${url} → ${(e as Error).message}`);
     }
-    if (attempt < attempts - 1) await sleep(5000 * (attempt + 1));
   }
   throw new Error('All Overpass endpoints failed');
 }
@@ -79,7 +111,6 @@ for (const r of regions) {
     }
   }
   console.log(`  ${features.length} features`);
-  await sleep(5000); // be polite to the public Overpass servers
 }
 // Partial results are still useful (missing regions load live), so only a total failure is an error.
 process.exit(regions.length > 0 && failed === regions.length ? 1 : 0);
