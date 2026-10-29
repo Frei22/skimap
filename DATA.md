@@ -42,6 +42,27 @@ The global Mapzen tiles are served at up to zoom 14 but contain 25 m data interp
 which avoids striped slope and snow shading. Steep Alpine faces in EU-DEM still have some
 horizontal banding, which is in the data itself. A 1 m model fixes that.
 
+## How much detail you get (Chamonix)
+
+| Zoom | Ground per screen pixel* | Imagery | Elevation (relief, slope colours) |
+| --- | --- | --- | --- |
+| 14 | 6.6 m | IGN, downsampled | LiDAR, downsampled |
+| 16 | 1.7 m | IGN, downsampled | LiDAR, native |
+| 17 | 0.8 m | IGN, downsampled | LiDAR, native (~0.8 m × 1.2 m) |
+| 18 | 0.4 m | **IGN 20 cm, 1:1 on a retina screen** | LiDAR, smoothly upsampled |
+| 19+ | ≤ 0.2 m | IGN, enlarged | LiDAR, smoothly upsampled |
+
+\* at 2× pixel density with "Sharp imagery" on (the default on retina screens).
+
+- **Imagery** is the limit past zoom 18. IGN's 20 cm photos are the sharpest free aerial imagery
+  for the Alps. The 10 cm swisstopo imagery covers the Swiss side.
+- **Slope colours** are computed over a ~3 m baseline. That's the scale of a crux or a step in a
+  couloir, and it averages out the row pattern between IGN's lat/lon grid and the map's pixels.
+- **Winter filter**: forest and alpine meadow are equally dark in summer photos. They are told
+  apart by canopy texture (local contrast over ~5 m: conifers ~0.13–0.16, meadow ~0.03), with
+  forest density over ~15 m deciding how generous the crown test is. Crowns stay dark, gaps and
+  meadows fill with snow, and rock outcrops above the treeline keep a dusting.
+
 ## Pistes, lifts, huts
 
 OpenStreetMap (ODbL), loaded per zoom-11 cell:
