@@ -3,7 +3,7 @@
 // Shared by the 3D terrain, the slope overlay, the winter filter and point queries.
 import { PMTiles } from 'pmtiles';
 import { DEM_LAYERS, DEM_MAXZOOM, type DemEncoding, type DemLayer } from './config';
-import { Lru, TILE, decodePixels, lat2tileY, lng2tileX, metersPerPixel, tile2lat, tileBounds } from './tiles';
+import { Lru, TILE, decodePixels, fetchRetrying, lat2tileY, lng2tileX, metersPerPixel, tile2lat, tileBounds } from './tiles';
 
 const NODATA = -32768;
 
@@ -36,7 +36,7 @@ function makeFetcher(layer: DemLayer): Fetcher {
   }
   if (layer.grid === 'geographic') return (z, x, y, signal) => fetchGeographic(layer, z, x, y, signal);
   return async (z, x, y, signal) => {
-    const res = await fetch(fillTemplate(pick(layer.url, x, y), z, x, y), { signal });
+    const res = await fetchRetrying(fillTemplate(pick(layer.url, x, y), z, x, y), signal);
     if (res.status === 404 || res.status === 204) return null;
     if (!res.ok) throw new Error(`DEM ${res.status}`);
     if (layer.encoding === 'bil32') return decodeBil(await res.arrayBuffer());
@@ -61,7 +61,7 @@ async function fetchGeographic(layer: DemLayer, z: number, x: number, y: number,
     .replace('{bbox-epsg-4326}', `${(90 - row1 * r).toFixed(9)},${minLon.toFixed(9)},${maxLat.toFixed(9)},${(minLon + W * r).toFixed(9)}`)
     .replace('{width}', `${W}`)
     .replace('{height}', `${H}`);
-  const res = await fetch(url, { signal });
+  const res = await fetchRetrying(url, signal);
   if (res.status === 404 || res.status === 204) return null;
   if (!res.ok) throw new Error(`DEM ${res.status}`);
   const src = decodeBil(await res.arrayBuffer(), W * H);
@@ -114,9 +114,11 @@ function decode(px: Uint8ClampedArray, encoding: Exclude<DemEncoding, 'bil32'>):
   return out;
 }
 
-/** Stops asking a layer that keeps failing (CORS, outage) for the rest of the session. */
-const failures = new Map<DemLayer, number>();
+/** Pauses a regional layer that keeps failing (outage, CORS) for a minute, then tries it again. */
+const failures = new Map<DemLayer, { count: number; until: number }>();
 const MAX_FAILURES = 6;
+const PAUSE_MS = 60_000;
+const paused = (layer: DemLayer) => (failures.get(layer)?.until ?? 0) > Date.now();
 
 const layers = DEM_LAYERS.map((layer) => ({ layer, fetch: makeFetcher(layer) }));
 
@@ -212,16 +214,17 @@ async function loadFromLayer(idx: number, z: number, x: number, y: number): Prom
   if (!intersects(layer, z, x, y) || z < layer.minzoom) return null;
   const native = layerNativeZoom(layer, z, y);
   if (z > native) return resample((tx, ty) => loadLayerTile(idx, native, tx, ty), native, z, x, y, 0);
-  if ((failures.get(layer) ?? 0) >= MAX_FAILURES && idx < layers.length - 1) return null;
+  if (paused(layer) && idx < layers.length - 1) throw new Error(`${layer.name} paused`);
   // A missing tile (404) is cached as null; other errors reject so the tile is retried later.
   try {
     const t = await fetch(z, x, y);
-    failures.set(layer, 0);
+    failures.delete(layer);
     return t;
   } catch (e) {
-    const n = (failures.get(layer) ?? 0) + 1;
-    failures.set(layer, n);
-    if (n === MAX_FAILURES && idx < layers.length - 1) console.warn(`DEM layer "${layer.name}" disabled after repeated errors`, e);
+    const count = (failures.get(layer)?.count ?? 0) + 1;
+    const pause = count >= MAX_FAILURES && idx < layers.length - 1;
+    failures.set(layer, { count: pause ? 0 : count, until: pause ? Date.now() + PAUSE_MS : 0 });
+    if (pause) console.warn(`DEM layer "${layer.name}" paused for a minute after repeated errors`, e);
     throw e;
   }
 }
@@ -256,6 +259,8 @@ export function getDemTile(z: number, x: number, y: number): Promise<Float32Arra
         } catch (e) {
           // A regional layer failing shouldn't hide the global one; the global one failing is an error.
           if (i === layers.length - 1 && !result) throw e;
+          // Use the coarser layer for now, but don't remember it: the next request tries again.
+          setTimeout(() => merged.delete(key), 0);
           continue;
         }
         if (!t) continue;
@@ -295,7 +300,7 @@ export async function demTileAsTerrarium(z: number, x: number, y: number): Promi
 function nativeZoom(z: number, x: number, y: number) {
   for (const { layer } of layers) {
     if (z < layer.minzoom || !intersects(layer, z, x, y)) continue;
-    if ((failures.get(layer) ?? 0) >= MAX_FAILURES && layer !== layers[layers.length - 1].layer) continue;
+    if (paused(layer) && layer !== layers[layers.length - 1].layer) continue;
     return Math.min(z, layerNativeZoom(layer, z, y));
   }
   return Math.min(z, DEM_MAXZOOM);

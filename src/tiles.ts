@@ -76,3 +76,20 @@ export async function encodePixels(px: Uint8ClampedArray, size = TILE): Promise<
   canvas.getContext('2d')!.putImageData(new ImageData(px as Uint8ClampedArray<ArrayBuffer>, size, size), 0, 0);
   return createImageBitmap(canvas);
 }
+
+/**
+ * Busy tile servers answer 429/5xx or drop connections now and then. Retry those a couple of times
+ * before giving up: giving up means a blurry fallback tile that stays until the page is reloaded.
+ */
+export async function fetchRetrying(url: string, signal?: AbortSignal) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(url, { signal });
+      if ((res.status === 429 || res.status >= 500) && attempt < 2) throw new Error(`HTTP ${res.status}`);
+      return res;
+    } catch (e) {
+      if (signal?.aborted || attempt >= 2) throw e;
+      await new Promise((r) => setTimeout(r, 400 * 3 ** attempt + Math.random() * 300));
+    }
+  }
+}

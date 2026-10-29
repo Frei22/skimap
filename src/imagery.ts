@@ -3,7 +3,7 @@
 import { IMAGERY, type ImageryProvider } from './config';
 import { FLAT_SHADE, terrainForTile } from './dem';
 import { climateAt } from './regions';
-import { TILE, clamp, decodePixels, encodePixels, metersPerPixel, parseTileUrl, smoothstep, tile2lat, tileBounds } from './tiles';
+import { TILE, clamp, decodePixels, encodePixels, fetchRetrying, metersPerPixel, parseTileUrl, smoothstep, tile2lat, tileBounds } from './tiles';
 
 
 
@@ -21,7 +21,7 @@ const tileUrl = (p: ImageryProvider, z: number, x: number, y: number) =>
 /** Fetches a provider tile at zoom `pz` ≤ z and crops+upscales the part covering tile (z,x,y). */
 async function fetchProviderPixels(p: ImageryProvider, z: number, x: number, y: number, pz: number, signal: AbortSignal) {
   const s = 2 ** (z - pz);
-  const res = await fetch(tileUrl(p, pz, Math.floor(x / s), Math.floor(y / s)), { signal });
+  const res = await fetchRetrying(tileUrl(p, pz, Math.floor(x / s), Math.floor(y / s)), signal);
   if (!res.ok || !(res.headers.get('content-type') ?? 'image').startsWith('image')) return null;
   const blob = await res.blob();
   if (s === 1) return decodePixels(blob);
@@ -149,6 +149,9 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
   // Two box passes ≈ a Gaussian: no square halos around lone trees.
   const r2 = Math.max(1, Math.ceil(R * 0.7));
   const localMean = blur1(blur1(lum, r2), r2), localSq = blur1(blur1(lum2, r2), r2);
+  // The same over ~15 m: forest density. A lone tree barely moves it, a stand of trees does.
+  const r3 = Math.min(24, 3 * r2);
+  const wideMean = blur1(blur1(lum, r3), r3), wideSq = blur1(blur1(lum2, r3), r3);
 
   for (let i = 0, p = 0; i < elevation.length; i++, p += 4) {
     const r = px[p] / 255, g = px[p + 1] / 255, bl = px[p + 2] / 255;
@@ -167,9 +170,13 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
     const contrast = Math.sqrt(Math.max(0, localSq[i] - m * m)) / (m + 0.04);
     // Measured on IGN's 20 cm imagery: conifer canopy ~0.13–0.16, alpine meadow ~0.03.
     const canopy = 1 - textureWeight + textureWeight * smoothstep(0.05, 0.11, contrast);
-    // Within forest, a crown is darker than its surroundings; the lighter gaps get snow. This also
-    // keeps the meadow next to a lone tree white.
-    const crown = 1 - textureWeight + textureWeight * clamp((m - L) * 15 + 0.6);
+    // A crown is darker than its surroundings and the lighter gaps get snow. Inside forest the
+    // threshold is generous (the local mean is itself canopy); out on open ground only the dark core
+    // of a lone tree counts, so the snow around it stays clean.
+    const wm = wideMean[i];
+    const wideContrast = Math.sqrt(Math.max(0, wideSq[i] - wm * wm)) / (wm + 0.04);
+    const density = smoothstep(0.06, 0.12, wideContrast) * clamp((0.42 - wm) / 0.12);
+    const crown = 1 - textureWeight + textureWeight * clamp((m - L) * 15 + 0.6 * density);
     const tree = clamp((0.4 - sL) / 0.16) * clamp((greenness + 0.04) * 25) * canopy * crown * belowTreeline * (1 - water);
     // Snow holds on open ground above the snowline and on anything not cliff-steep. Dark, non-green
     // pixels on steep ground are rock faces: the DEM smooths cliffs out, so the photo gets a say.
@@ -198,7 +205,8 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
     // read grey rather than as blue shadow. Only where the photo has real structure: on open meadow
     // the summer texture is grass and stones, which would look like dirty snow. Only a little of the
     // photo's broad light, too: summer cast shadows don't belong on the snow.
-    const texF = 1 + (1 - photoSnow) * detail * (1.4 * structure * (L - sL) + 0.22 * (Math.min(sL, 0.75) - 0.45));
+    const notGrass = 1 - clamp(greenness * 12);
+    const texF = 1 + (1 - photoSnow) * detail * (1.4 * structure * notGrass * (L - sL) + 0.22 * (Math.min(sL, 0.75) - 0.45));
     const sr = tint[0] * texF, sg = tint[1] * texF, sb = tint[2] * texF;
 
     // Ground that isn't snowed in: cooler, less saturated, a bit darker...
