@@ -11,7 +11,7 @@ import { IMAGERY_PROTOCOL, SLOPE_PROTOCOL } from './protocols';
 import { OsmStore } from './osm';
 import { renderProfile } from './profile-chart';
 import { REGIONS, regionById, type Region } from './regions';
-import { areaKey, call, tileZoom } from './rpc';
+import { areaKey, cachedTile, call, setInteracting, tileZoom } from './rpc';
 import {
   ALL_ASPECTS, ASPECTS, DEFAULT_SLOPE_FILTER, LOW_SLOPE_COLOR, SLOPE_CLASSES, SLOPE_DOMAIN,
   describeFilter, slopeTileUrl, type SlopeFilter,
@@ -61,8 +61,11 @@ let region: Region = regionById(settings.region) ?? REGIONS[0];
 
 // ---------------------------------------------------------------- protocols (work happens in a Web Worker)
 // Coarsest tiles first (they cover the most screen); slope tiles just after imagery of the same zoom.
-maplibregl.addProtocol(IMAGERY_PROTOCOL, (p, abort) =>
-  call<ImageBitmap>('imagery', [p.url], abort.signal, areaKey(p.url), tileZoom(p.url)).then((data) => ({ data })));
+maplibregl.addProtocol(IMAGERY_PROTOCOL, async (p, abort) => {
+  const cached = cachedTile(p.url);
+  if (cached) return { data: await createImageBitmap(cached) };
+  return { data: await call<ImageBitmap>('imagery', [p.url], abort.signal, areaKey(p.url), tileZoom(p.url)) };
+});
 maplibregl.addProtocol(SLOPE_PROTOCOL, (p, abort) =>
   call<ImageBitmap>('slope', [p.url], abort.signal, areaKey(p.url), tileZoom(p.url) + 0.5).then((data) => ({ data })));
 maplibregl.setWorkerUrl(workerUrl);
@@ -102,12 +105,16 @@ const map = new maplibregl.Map({
   ...cameraFor(region),
   maxPitch: 85,
   hash: true,
+  // Keep more tiles around when they leave the view, so looking back doesn't blank the background.
+  maxTileCacheSize: matchMedia('(pointer: coarse)').matches ? 200 : 400,
   attributionControl: { compact: true },
   // The draped imagery is 2 texels per CSS pixel, so 3× screens gain little beyond 2× but pay 2.25× the pixels.
   pixelRatio: Math.min(window.devicePixelRatio, 2),
   canvasContextAttributes: { antialias: window.devicePixelRatio < 2 },
 });
 if (!hasHash) map.jumpTo(cameraFor(region));
+map.on('movestart', () => setInteracting(true));
+map.on('moveend', () => setInteracting(false));
 
 // ---------------------------------------------------------------- pistes & lifts
 const status = $('#status');

@@ -97,8 +97,9 @@ export function buildStyle(
       paint: { 'raster-fade-duration': 0, 'raster-resampling': 'linear' },
     },
     {
+      // No fade: on 3D terrain every fading tile re-renders the draped texture each frame.
       id: 'imagery', type: 'raster', source: 'imagery',
-      paint: { 'raster-fade-duration': 120, 'raster-resampling': 'linear' },
+      paint: { 'raster-fade-duration': 0, 'raster-resampling': 'linear' },
     },
     {
       id: 'hillshade', type: 'hillshade', source: 'dem-hillshade', layout: vis(t.hillshade),

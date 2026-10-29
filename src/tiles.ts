@@ -72,9 +72,13 @@ export async function decodePixels(blob: Blob, size = TILE): Promise<Uint8Clampe
 }
 
 export async function encodePixels(px: Uint8ClampedArray, size = TILE): Promise<ImageBitmap> {
+  return createImageBitmap(pixelsToCanvas(px, size));
+}
+
+export function pixelsToCanvas(px: Uint8ClampedArray, size = TILE) {
   const canvas = new OffscreenCanvas(size, size);
   canvas.getContext('2d')!.putImageData(new ImageData(px as Uint8ClampedArray<ArrayBuffer>, size, size), 0, 0);
-  return createImageBitmap(canvas);
+  return canvas;
 }
 
 /**

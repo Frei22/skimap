@@ -7,11 +7,19 @@ type Req = { id: number; op: string; args: any[] } | { id: number; op: 'cancel' 
 
 const inflight = new Map<number, AbortController>();
 
-async function run(op: string, args: any[], abort: AbortController): Promise<{ result: unknown; transfer: Transferable[] }> {
+type Done = { result: unknown; transfer: Transferable[]; after?: () => Promise<void> };
+
+async function run(op: string, args: any[], abort: AbortController): Promise<Done> {
   switch (op) {
     case 'imagery': {
-      const { data } = await imageryProtocol({ url: args[0] }, abort);
-      return { result: data, transfer: [data] };
+      const { data, canvas } = await imageryProtocol({ url: args[0] }, abort);
+      // After delivering the tile, send a compressed copy for the page's cache, so looking back at
+      // an area that left the screen doesn't redo the download and the winter filter.
+      const after = async () => {
+        const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 });
+        (self as unknown as Worker).postMessage({ cache: { key: args[0], blob } });
+      };
+      return { result: data, transfer: [data], after };
     }
     case 'slope': {
       const { data } = await slopeProtocol({ url: args[0] });
@@ -40,8 +48,9 @@ self.onmessage = async (ev: MessageEvent<Req>) => {
   const abort = new AbortController();
   inflight.set(msg.id, abort);
   try {
-    const { result, transfer } = await run(msg.op, (msg as { args: any[] }).args, abort);
+    const { result, transfer, after } = await run(msg.op, (msg as { args: any[] }).args, abort);
     (self as unknown as Worker).postMessage({ id: msg.id, result }, transfer);
+    await after?.().catch(() => {});
   } catch (e) {
     (self as unknown as Worker).postMessage({ id: msg.id, error: (e as Error).message ?? String(e) });
   } finally {

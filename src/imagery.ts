@@ -3,7 +3,7 @@
 import { IMAGERY, type ImageryProvider } from './config';
 import { FLAT_SHADE, terrainForTile } from './dem';
 import { climateAt } from './regions';
-import { TILE, clamp, decodePixels, encodePixels, fetchRetrying, metersPerPixel, parseTileUrl, smoothstep, tile2lat, tileBounds } from './tiles';
+import { TILE, clamp, decodePixels, fetchRetrying, pixelsToCanvas, metersPerPixel, parseTileUrl, smoothstep, tile2lat, tileBounds } from './tiles';
 
 
 
@@ -316,5 +316,6 @@ export async function imageryProtocol(params: { url: string }, abort: AbortContr
   if (px && winter) px = await winterize(px, z, x, y);
   if (!px) px = await syntheticRelief(z, x, y, winter);
   if (!px) throw new Error('No imagery for tile');
-  return { data: await encodePixels(px) };
+  const canvas = pixelsToCanvas(px);
+  return { data: await createImageBitmap(canvas), canvas };
 }
