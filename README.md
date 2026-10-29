@@ -61,9 +61,9 @@ for the Swedish areas (see [DATA.md](DATA.md)). Any static host works too (Cloud
 
 ```
 MapLibre GL JS 6 (globe + 3D terrain)
- ├─ ski-imagery://z/x/y   ┐
- ├─ ski-slope://z/x/y     ├─ custom tile protocols, computed in Web Workers (src/tile-worker.ts)
- ├─ ski-dem://z/x/y       ┘
+ ├─ ski-imagery://z/x/y   ┐ custom tile protocols, computed in Web Workers (src/tile-worker.ts)
+ ├─ ski-slope://z/x/y     ┘ using the best elevation model per tile (IGN LiDAR 1 m in France)
+ ├─ 3D mesh               Mapzen terrain tiles, straight from AWS
  ├─ contours              maplibre-contour (isolines from the DEM, in a worker)
  ├─ OpenStreetMap         pistes/lifts/huts per z11 cell: pre-baked JSON → Overpass API → Cache Storage
  └─ OpenFreeMap           place, peak and lake names
