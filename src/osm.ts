@@ -21,7 +21,7 @@ type OsmElement = {
 };
 
 export const overpassQuery = (s: number, w: number, n: number, e: number) => `
-[out:json][timeout:90];
+[out:json][timeout:180];
 (
   way["piste:type"](${s},${w},${n},${e});
   relation["piste:type"](${s},${w},${n},${e});
