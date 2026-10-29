@@ -1,5 +1,10 @@
-# Builds the site and publishes it on GitHub Pages (free hosting).
+# Builds the site and publishes it on GitHub Pages (free for public repositories).
 # One-time setup: repo Settings → Pages → Build and deployment → Source: "GitHub Actions".
+#
+# Optional: Swedish 1 m elevation from Lantmäteriet. Add your Geotorget login as repository secrets
+# LANTMATERIET_USER and LANTMATERIET_PASSWORD (Settings → Secrets and variables → Actions) and the
+# build downloads it and serves it with the site. The result is cached, so it only rebuilds when the
+# areas or the scripts change.
 name: Deploy
 
 on:
@@ -18,6 +23,12 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+env:
+  # Areas that get a 1 m Lantmäteriet elevation layer: id, then bbox W S E N.
+  SWEDISH_DEM_AREAS: |
+    riksgransen 17.95 68.35 18.38 68.51
+    hemavan 14.92 65.73 15.32 65.91
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -28,14 +39,55 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - id: pages
+        uses: actions/configure-pages@v5
+
       - name: Pre-bake pistes & lifts from OpenStreetMap
         run: npm run fetch-osm
         continue-on-error: true # the app falls back to live Overpass queries
+
+      - name: Restore Swedish elevation
+        id: demcache
+        uses: actions/cache/restore@v4
+        with:
+          path: public/dem
+          key: lm-dem-v1-${{ hashFiles('scripts/build-dem.py', 'scripts/fetch-lantmateriet.py', '.github/workflows/deploy.yml') }}
+      - name: Build Swedish 1 m elevation (Lantmäteriet)
+        id: lmbuild
+        if: steps.demcache.outputs.cache-hit != 'true'
+        continue-on-error: true # the site still deploys, with the global elevation in Sweden
+        env:
+          LANTMATERIET_USER: ${{ secrets.LANTMATERIET_USER }}
+          LANTMATERIET_PASSWORD: ${{ secrets.LANTMATERIET_PASSWORD }}
+        run: |
+          if [ -z "$LANTMATERIET_USER" ]; then echo "No Lantmäteriet secrets set; skipping."; exit 0; fi
+          pip install --quiet rasterio numpy pillow pmtiles
+          mkdir -p public/dem
+          echo "$SWEDISH_DEM_AREAS" | while read -r id w s e n; do
+            [ -z "$id" ] && continue
+            python scripts/fetch-lantmateriet.py --bbox $w $s $e $n --out "dem-src/$id"
+            python scripts/build-dem.py -o "public/dem/$id.pmtiles" --minzoom 10 --maxzoom 15 --bbox $w $s $e $n dem-src/$id/*.tif
+            rm -rf "dem-src/$id"
+          done
+          echo "built=true" >> "$GITHUB_OUTPUT"
+      - name: Cache Swedish elevation
+        if: steps.lmbuild.outputs.built == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: public/dem
+          key: ${{ steps.demcache.outputs.cache-primary-key }}
+      - name: Configure elevation layers
+        run: |
+          BASE="${{ steps.pages.outputs.base_url }}"
+          LAYERS=$(echo "$SWEDISH_DEM_AREAS" | while read -r id w s e n; do
+            [ -f "public/dem/$id.pmtiles" ] || continue
+            printf '{"name":"Lantmäteriet 1 m","url":"pmtiles://%s/dem/%s.pmtiles","encoding":"terrarium","minzoom":10,"maxzoom":15,"resolution":1,"bounds":[%s,%s,%s,%s],"attribution":"© Lantmäteriet"}\n' "$BASE" "$id" "$w" "$s" "$e" "$n"
+          done | paste -sd, -)
+          echo "VITE_DEM_LAYERS=${LAYERS:+[$LAYERS]}" >> "$GITHUB_ENV"
+          echo "Elevation layers: ${LAYERS:-none}"
       - run: npm run build
         env:
-          # Optional extras, set under Settings → Secrets and variables → Actions → Variables.
           VITE_SE_ORTHO_URL: ${{ vars.VITE_SE_ORTHO_URL }}
-          VITE_DEM_LAYERS: ${{ vars.VITE_DEM_LAYERS }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

@@ -4,3 +4,5 @@ dist/
 .DS_Store
 .env.local
 public/test-*.pmtiles
+public/dem/
+dem-src/

@@ -125,7 +125,8 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
   const terrain = await terrainForTile(z, x, y, true);
   if (!terrain) return px;
   const b = tileBounds(z, x, y);
-  const { snowline, treeline } = climateAt((b.west + b.east) / 2, (b.north + b.south) / 2);
+  const { snowline, treeline, forest } = climateAt((b.west + b.east) / 2, (b.north + b.south) / 2);
+  const birch = forest === 'birch';
   const { elevation, slope, shade } = terrain;
   // Detail strength: at low zooms the photo is mostly colour, not texture.
   const detail = smoothstep(10, 16, z);
@@ -156,19 +157,28 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
     const stick = (1 - smoothstep(46, 62, s)) * (1 - rock) + (1 - smoothstep(30, 46, s)) * rock;
     // The gaps between crowns (lighter than the canopy around them) get snow too.
     const gap = clamp((L - sL) * 6);
-    const snow = above * stick * (1 - 0.85 * tree * (1 - gap));
+    const snow = above * stick * (1 - (birch ? 0.35 : 0.85) * tree * (1 - gap));
 
     // Snow, shaded by the terrain, with the photo's light and shadow kept as texture (roof edges,
-    // cast shadows, tracks), more so when zoomed in.
-    const [sr, sg, sb] = snowColour(shade[i], 1 + detail * 0.55 * (Math.min(L, 0.75) - 0.45));
+    // cast shadows, tracks), more so when zoomed in. Where the photo already shows snow (winter
+    // imagery, glaciers), its own light is the real thing: keep it and add half the relief shading.
+    const vDem = snowLight(shade[i]);
+    // Fine detail from the photo (L - sL), but only a little of its broad light: summer photos
+    // carry their own cast shadows, which don't belong on the snow.
+    const vTex = vDem * (1 + detail * (0.9 * (L - sL) + 0.22 * (Math.min(sL, 0.75) - 0.45)));
+    const satS = Math.max(sr0, sg0, sb0) - Math.min(sr0, sg0, sb0);
+    const photoSnow = clamp((sL - 0.6) / 0.2) * clamp(1 - satS * 5);
+    const vPhoto = (L / 0.88) * (1 + 0.5 * (vDem - 0.93));
+    const [sr, sg, sb] = snowTint(vTex + (vPhoto - vTex) * photoSnow);
 
     // Ground that isn't snowed in: cooler, less saturated, a bit darker...
     let gr = (L + (r - L) * 0.55) * 0.86, gg = (L + (g - L) * 0.55) * 0.9, gb = (L + (bl - L) * 0.55) * 0.94 + 0.02;
-    // ...except conifers: dark winter green with the photo's crown texture, lightly frosted.
+    // ...except forest: conifers in dark winter green with the photo's crown texture, lightly frosted;
+    // bare birch as a grey-brown haze.
     const frost = 0.15 * above;
-    const tr = (0.55 * L + 0.03) * (1 - frost) + 0.85 * frost;
-    const tg = (0.8 * L + 0.07) * (1 - frost) + 0.88 * frost;
-    const tb = (0.62 * L + 0.06) * (1 - frost) + 0.95 * frost;
+    const tr = birch ? 0.42 + 0.4 * L : (0.55 * L + 0.03) * (1 - frost) + 0.85 * frost;
+    const tg = birch ? 0.38 + 0.4 * L : (0.8 * L + 0.07) * (1 - frost) + 0.88 * frost;
+    const tb = birch ? 0.36 + 0.4 * L : (0.62 * L + 0.06) * (1 - frost) + 0.95 * frost;
     gr += (tr - gr) * tree;
     gg += (tg - gg) * tree;
     gb += (tb - gb) * tree;
@@ -205,11 +215,11 @@ function boxBlur(px: Uint8ClampedArray, radius: number) {
   return out;
 }
 
-/** Snow colour for a relative illumination: near-white on flat ground, cold blue in shade. */
-function snowColour(shade: number, tex: number): [number, number, number] {
-  const v = clamp(0.93 + 0.95 * (shade - FLAT_SHADE), 0.4, 1.05);
-  return [(v - (1 - v) * 0.16) * tex, (v - (1 - v) * 0.05) * tex, (v + (1 - v) * 0.22) * tex];
-}
+/** Brightness of snow for a relative illumination: ~0.93 on flat ground, up to 1.05 facing the light. */
+const snowLight = (shade: number) => clamp(0.93 + 0.95 * (shade - FLAT_SHADE), 0.5, 1.05);
+
+/** Snow colour for a brightness: white in the light, increasingly cold blue in shade. */
+const snowTint = (v: number): [number, number, number] => [v - (1 - v) * 0.16, v - (1 - v) * 0.05, v + (1 - v) * 0.22];
 
 /** No imagery anywhere (offline provider, gap in coverage): draw the terrain itself as a shaded relief. */
 async function syntheticRelief(z: number, x: number, y: number, winter: boolean) {
@@ -225,7 +235,7 @@ async function syntheticRelief(z: number, x: number, y: number, winter: boolean)
     const lit = clamp(0.75 + 0.9 * (t.shade[i] - FLAT_SHADE), 0.3, 1.1);
     const land = [(0.42 + 0.2 * rock) * lit, (0.5 + 0.1 * rock) * lit, (0.36 + 0.24 * rock) * lit];
     const snow = smoothstep(snowline - 250, snowline + 250, h) * (1 - smoothstep(46, 62, s));
-    const sc = snowColour(t.shade[i], 1);
+    const sc = snowTint(snowLight(t.shade[i]));
     px[p] = 255 * clamp(land[0] + (sc[0] - land[0]) * snow);
     px[p + 1] = 255 * clamp(land[1] + (sc[1] - land[1]) * snow);
     px[p + 2] = 255 * clamp(land[2] + (sc[2] - land[2]) * snow);

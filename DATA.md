@@ -56,30 +56,37 @@ Place, peak and lake names come from [OpenFreeMap](https://openfreemap.org) (Ope
 
 ### 1. Swedish 1 m elevation (biggest upgrade for Riksgränsen and Hemavan)
 
-Lantmäteriet's **Markhöjdmodell Nedladdning, grid 1+** is open data (CC0), but downloading it needs
-an account:
+Lantmäteriet's **Markhöjdmodell Nedladdning, grid 1+** is free (CC BY 4.0), but downloading needs a
+Geotorget account with the product ordered. The deploy workflow does the rest:
 
-1. Create an account on [Geotorget](https://geotorget.lantmateriet.se) and order the free product
-   "Markhöjdmodell Nedladdning, grid 1+". This gives you access keys for the STAC download API.
-2. Download the tiles covering the two areas (about 15 × 15 km each) as GeoTIFFs, using the STAC API
-   (`https://api.lantmateriet.se/stac-hojd/v1/`) or the QGIS "LM STAC downloader" plugin.
-3. Build a tile archive (needs Python with `rasterio numpy pillow pmtiles`):
-   ```bash
-   python scripts/build-dem.py -o lapland.pmtiles --minzoom 10 --maxzoom 15 \
-     --bbox 17.9 68.3 18.5 68.6 riksgransen/*.tif
-   ```
-   At 68°N a zoom-15 pixel is about 1.8 m, so `--maxzoom 15` keeps the 1 m detail. Expect roughly
-   50–150 MB per area.
-4. Upload it to a static host that supports range requests. Cloudflare R2 is free up to 10 GB
-   with no download fees; GitHub Releases also works. Then set the repository variable
-   `VITE_DEM_LAYERS` (Settings → Secrets and variables → Actions → Variables):
-   ```json
-   [{"name":"Lantmäteriet 1 m","url":"pmtiles://https://<your-bucket>/lapland.pmtiles",
-     "encoding":"terrarium","minzoom":10,"maxzoom":15,"resolution":1,
-     "bounds":[14.8,65.6,18.6,68.7],"attribution":"© Lantmäteriet"}]
-   ```
+1. On [Geotorget](https://geotorget.lantmateriet.se), order "Markhöjdmodell Nedladdning" (free).
+2. In the GitHub repo: **Settings → Secrets and variables → Actions → New repository secret**, add
+   `LANTMATERIET_USER` and `LANTMATERIET_PASSWORD` (your Geotorget login).
+3. Run the **Deploy** workflow (Actions tab → Deploy → Run workflow).
 
-The same script works for swissALTI3D (0.5 m) or any other GeoTIFF elevation model.
+The workflow searches the STAC-hojd catalogue for the areas in `SWEDISH_DEM_AREAS`
+(`.github/workflows/deploy.yml`), downloads the 10 × 10 km GeoTIFFs, builds one PMTiles archive
+per area with `scripts/build-dem.py` (zoom 15 ≈ 1.8 m at 68°N), and serves them with the site. The
+result is cached, so later deploys reuse it. To add an area, add a line to `SWEDISH_DEM_AREAS`.
+
+To do it by hand instead:
+
+```bash
+export LANTMATERIET_USER=... LANTMATERIET_PASSWORD=...
+python scripts/fetch-lantmateriet.py --bbox 17.95 68.35 18.38 68.51 --out dem-src/riksgransen
+python scripts/build-dem.py -o riksgransen.pmtiles --minzoom 10 --maxzoom 15 \
+  --bbox 17.95 68.35 18.38 68.51 dem-src/riksgransen/*.tif
+```
+
+and point `VITE_DEM_LAYERS` at the file (any static host with range requests, for example
+Cloudflare R2):
+
+```json
+[{"name":"Lantmäteriet 1 m","url":"pmtiles://https://<host>/riksgransen.pmtiles","encoding":"terrarium",
+  "minzoom":10,"maxzoom":15,"resolution":1,"bounds":[17.95,68.35,18.38,68.51],"attribution":"© Lantmäteriet"}]
+```
+
+The same build script works for swissALTI3D (0.5 m) or any other GeoTIFF elevation model.
 
 ### 2. Swedish orthophotos
 
@@ -93,13 +100,12 @@ in ahead of Esri for Sweden.
 `snowline` in `src/regions.ts` decides where the winter filter starts painting snow (750 m for
 Chamonix, 0 m for Lapland). Tune it to the season look you prefer.
 
-## Not verified from the build sandbox
+## What has been tested live
 
-The development sandbox could only reach AWS, so these endpoints are written to their published
-specs but were not exercised against the live services. In testing, local copies stood in for them.
-The app falls back gracefully if any of them misbehaves:
-
-- IGN orthophoto WMTS and RGE ALTI WMS (`data.geopf.fr`)
-- swisstopo WMTS, Esri World Imagery, OpenFreeMap, Overpass
+Checked against the live services from the build sandbox: IGN orthophotos and LiDAR HD elevation,
+swisstopo, Esri World Imagery, OpenFreeMap labels and fonts, and the Mapzen terrain tiles (all
+CORS-enabled). Not yet exercised: the public Overpass servers (unreachable from the sandbox; the
+deploy workflow pre-bakes pistes from GitHub's servers instead) and the Lantmäteriet download
+(needs your Geotorget login; the workflow log shows exactly what happened on the first run).
 
 If something looks off in a real browser, the browser console says which source failed.

@@ -53,8 +53,10 @@ npm run fetch-osm    # optional: pre-bake pistes & lifts into public/data/osm (e
 ## Hosting (free)
 
 `.github/workflows/deploy.yml` builds the site, refreshes piste data weekly and publishes to
-**GitHub Pages**. To turn it on, go to **Settings → Pages → Build and deployment → Source: GitHub
-Actions** and push to `main`. Any static host works too (Cloudflare Pages, Netlify): build command
+**GitHub Pages** (free for public repositories). To turn it on, go to **Settings → Pages → Build and
+deployment → Source: GitHub Actions** and push to `main` (or run the workflow from the Actions tab).
+With the secrets `LANTMATERIET_USER` / `LANTMATERIET_PASSWORD` set, it also builds 1 m elevation
+for the Swedish areas (see [DATA.md](DATA.md)). Any static host works too (Cloudflare Pages, Netlify): build command
 `npm run build`, output folder `dist`.
 
 ## How it works
@@ -80,6 +82,7 @@ MapLibre GL JS 6 (globe + 3D terrain)
 | `src/style.ts` | Map style: layers, colours, line widths |
 | `src/main.ts` | UI: region picker, layers panel, info cards, route planner |
 | `scripts/build-dem.py` | Turns GeoTIFF elevation data (e.g. Lantmäteriet 1 m) into a PMTiles layer |
+| `scripts/fetch-lantmateriet.py` | Downloads Lantmäteriet's 1 m terrain model for an area (STAC-hojd API) |
 | `scripts/fetch-osm.ts` | Pre-bakes OpenStreetMap data for all regions |
 
 ### Adding a region
