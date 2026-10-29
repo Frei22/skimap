@@ -48,8 +48,10 @@ export const DEM_LAYERS: DemLayer[] = [
           url: 'https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.MIXED.WGS84G&STYLES=&CRS=EPSG:4326&BBOX={bbox-epsg-4326}&WIDTH={width}&HEIGHT={height}&FORMAT=image/x-bil;bits=32',
           encoding: 'bil32' as const,
           grid: 'geographic' as const,
-          minzoom: 12,
-          maxzoom: 17, // IGN's finest level: ~0.8 m × 1.2 m at 46°N
+          // Below z14 IGN has to shrink 1 m data on the fly (10+ s per request); the 25 m global
+          // model is as good there. z16 (~1.7 m) is enough for the ~3 m slope/shading baseline.
+          minzoom: 14,
+          maxzoom: 16,
           resolution: 1,
           bounds: [-5.2, 41.3, 9.6, 51.1] as [number, number, number, number],
           attribution: '<a href="https://geoservices.ign.fr/lidarhd" target="_blank">Elevation: IGN LiDAR HD, RGE ALTI</a>',

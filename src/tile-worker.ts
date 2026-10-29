@@ -1,5 +1,5 @@
 // All pixel-crunching (DEM decode, slope, winter filter) runs here, off the UI thread.
-import { demTileAsTerrarium, elevationAt, slopeAt } from './dem';
+import { elevationAt, slopeAt } from './dem';
 import { imageryProtocol } from './imagery';
 import { slopeProtocol } from './slope';
 
@@ -16,11 +16,6 @@ async function run(op: string, args: any[], abort: AbortController): Promise<{ r
     case 'slope': {
       const { data } = await slopeProtocol({ url: args[0] });
       return { result: data, transfer: [data] };
-    }
-    case 'dem': {
-      const bmp = await demTileAsTerrarium(args[0], args[1], args[2]);
-      if (!bmp) throw new Error('No DEM');
-      return { result: bmp, transfer: [bmp] };
     }
     case 'elevations': {
       const pts = args[0] as [number, number][];

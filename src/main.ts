@@ -7,24 +7,23 @@ import mlcontour from 'maplibre-contour';
 import type { Feature, LineString, MultiLineString, Position } from 'geojson';
 import { DEM_LAYERS, IMAGERY } from './config';
 import { aspectName, distance, distanceBySlope, fmtDist, fmtEle, profile, type Profile } from './geo';
-import { DEM_PROTOCOL, IMAGERY_PROTOCOL, SLOPE_PROTOCOL } from './protocols';
+import { IMAGERY_PROTOCOL, SLOPE_PROTOCOL } from './protocols';
 import { OsmStore } from './osm';
 import { renderProfile } from './profile-chart';
 import { REGIONS, regionById, type Region } from './regions';
-import { areaKey, call } from './rpc';
+import { areaKey, call, tileZoom } from './rpc';
 import {
   ALL_ASPECTS, ASPECTS, DEFAULT_SLOPE_FILTER, LOW_SLOPE_COLOR, SLOPE_CLASSES, SLOPE_DOMAIN,
   describeFilter, slopeTileUrl, type SlopeFilter,
 } from './slope-filter';
 import { DIFFICULTY_COLORS, DIFFICULTY_LABELS, LAYER_GROUPS, buildStyle, imageryTiles, type Toggles } from './style';
-import { parseTileUrl } from './tiles';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 // ---------------------------------------------------------------- settings
 type Settings = Toggles & { region: string; exaggeration: number; hd: boolean; slopeFilter: SlopeFilter };
-const SETTINGS_KEY = 'skimap:settings:v2';
+const SETTINGS_KEY = 'skimap:settings:v3';
 const defaults: Settings = {
   region: 'chamonix',
   winter: true,
@@ -34,7 +33,8 @@ const defaults: Settings = {
   labels: true,
   hillshade: false,
   exaggeration: 1,
-  hd: window.devicePixelRatio >= 2, // detail first; switch off under Layers if a phone struggles
+  // Retina desktops get 1:1 imagery; on phones it would quadruple the tiles to process, so it's opt-in.
+  hd: window.devicePixelRatio >= 2 && !matchMedia('(pointer: coarse)').matches,
   slopeFilter: DEFAULT_SLOPE_FILTER,
 };
 const settings: Settings = { ...defaults };
@@ -42,9 +42,10 @@ try {
   const saved = localStorage.getItem(SETTINGS_KEY);
   if (saved) Object.assign(settings, JSON.parse(saved));
   else {
-    // v1 → v2: keep everything except "sharp imagery", which is now on by default on retina screens.
-    const { hd: _, ...v1 } = JSON.parse(localStorage.getItem('skimap:settings:v1') ?? '{}');
-    Object.assign(settings, v1);
+    // Older versions: keep everything except "sharp imagery", whose default changed.
+    const old = localStorage.getItem('skimap:settings:v2') ?? localStorage.getItem('skimap:settings:v1') ?? '{}';
+    const { hd: _, ...rest } = JSON.parse(old);
+    Object.assign(settings, rest);
   }
 } catch {
   /* storage unavailable */
@@ -59,15 +60,14 @@ const save = () => {
 let region: Region = regionById(settings.region) ?? REGIONS[0];
 
 // ---------------------------------------------------------------- protocols (work happens in a Web Worker)
-maplibregl.addProtocol(IMAGERY_PROTOCOL, (p, abort) => call<ImageBitmap>('imagery', [p.url], abort.signal, areaKey(p.url)).then((data) => ({ data })));
-maplibregl.addProtocol(SLOPE_PROTOCOL, (p, abort) => call<ImageBitmap>('slope', [p.url], abort.signal, areaKey(p.url)).then((data) => ({ data })));
-maplibregl.addProtocol(DEM_PROTOCOL, (p, abort) => {
-  const { z, x, y } = parseTileUrl(p.url);
-  return call<ImageBitmap>('dem', [z, x, y], abort.signal).then((data) => ({ data }));
-});
+// Coarsest tiles first (they cover the most screen); slope tiles just after imagery of the same zoom.
+maplibregl.addProtocol(IMAGERY_PROTOCOL, (p, abort) =>
+  call<ImageBitmap>('imagery', [p.url], abort.signal, areaKey(p.url), tileZoom(p.url)).then((data) => ({ data })));
+maplibregl.addProtocol(SLOPE_PROTOCOL, (p, abort) =>
+  call<ImageBitmap>('slope', [p.url], abort.signal, areaKey(p.url), tileZoom(p.url) + 0.5).then((data) => ({ data })));
 maplibregl.setWorkerUrl(workerUrl);
-// Our protocol tiles wait on workers, not the network; a deep queue keeps them from starving the DEM.
-maplibregl.setMaxParallelImageRequests(64);
+// Our protocol tiles wait on workers, not the network; a deeper queue keeps the workers busy.
+maplibregl.setMaxParallelImageRequests(32);
 
 // Contours come from the global DEM (maplibre-contour fetches it directly in its own worker).
 const globalDem = DEM_LAYERS[DEM_LAYERS.length - 1];
@@ -88,19 +88,26 @@ const contourTiles = contourDem.contourProtocolUrl({
 
 // ---------------------------------------------------------------- map
 const hasHash = /^#\d/.test(location.hash);
+/**
+ * A region's start view, adapted to the screen: on a tall portrait phone a steep tilt shows half the
+ * Alps up to the horizon (slow to load, mostly far away), so tilt less and look a little closer.
+ */
+function cameraFor(r: Region) {
+  const portrait = window.innerHeight > window.innerWidth * 1.3;
+  return portrait ? { ...r.camera, pitch: Math.min(r.camera.pitch, 52), zoom: r.camera.zoom + 0.3 } : r.camera;
+}
 const map = new maplibregl.Map({
   container: 'map',
   style: buildStyle(settings, contourTiles, settings.hd ? 128 : 256, settings.exaggeration, settings.slopeFilter),
-  center: region.camera.center,
-  zoom: region.camera.zoom,
-  pitch: region.camera.pitch,
-  bearing: region.camera.bearing,
+  ...cameraFor(region),
   maxPitch: 85,
   hash: true,
   attributionControl: { compact: true },
-  canvasContextAttributes: { antialias: true },
+  // The draped imagery is 2 texels per CSS pixel, so 3× screens gain little beyond 2× but pay 2.25× the pixels.
+  pixelRatio: Math.min(window.devicePixelRatio, 2),
+  canvasContextAttributes: { antialias: window.devicePixelRatio < 2 },
 });
-if (!hasHash) map.jumpTo(region.camera);
+if (!hasHash) map.jumpTo(cameraFor(region));
 
 // ---------------------------------------------------------------- pistes & lifts
 const status = $('#status');
@@ -136,9 +143,19 @@ function loadVisibleOsm() {
 }
 map.on('load', loadVisibleOsm);
 // On phones the expanded attribution covers a lot of map; start it collapsed behind its (i) button.
-map.on('load', () => {
-  if (matchMedia('(max-width: 640px)').matches) document.querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show');
-});
+// On phones the expanded credits cover a lot of map. MapLibre expands them once they arrive (after
+// the first tiles), so collapse them the first time that happens; the (i) button still opens them.
+if (matchMedia('(max-width: 640px)').matches) {
+  const attrib = document.querySelector('.maplibregl-ctrl-attrib');
+  if (attrib) {
+    const obs = new MutationObserver(() => {
+      if (!attrib.classList.contains('maplibregl-compact-show')) return;
+      attrib.classList.remove('maplibregl-compact-show');
+      obs.disconnect();
+    });
+    obs.observe(attrib, { attributes: true, attributeFilter: ['class'] });
+  }
+}
 map.on('moveend', loadVisibleOsm);
 
 // ---------------------------------------------------------------- region picker
@@ -168,7 +185,7 @@ regionMenu.addEventListener('click', (e) => {
   renderRegions();
   regionMenu.hidden = true;
   closeCard();
-  map.flyTo({ ...r.camera, duration: 4000, essential: true });
+  map.flyTo({ ...cameraFor(r), duration: 4000, essential: true });
 });
 document.addEventListener('click', (e) => {
   if (!(e.target as HTMLElement).closest('.region-picker')) regionMenu.hidden = true;
@@ -198,7 +215,7 @@ layersSheet.querySelectorAll<HTMLElement>('[data-season]').forEach((b) =>
     settings.winter = winter;
     save();
     syncSeason();
-    (map.getSource('imagery') as RasterTileSource).setTiles(imageryTiles(winter));
+    for (const id of ['imagery', 'imagery-base']) (map.getSource(id) as RasterTileSource).setTiles(imageryTiles(winter));
   }),
 );
 

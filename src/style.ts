@@ -1,19 +1,20 @@
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from 'maplibre-gl';
 import { DEM_LAYERS, DEM_MAXZOOM, GLYPHS, IMAGERY, IMAGERY_MAXZOOM, LABELS_TILEJSON, TERRAIN_MAXZOOM } from './config';
-import { DEM_PROTOCOL, IMAGERY_PROTOCOL } from './protocols';
+import { IMAGERY_PROTOCOL } from './protocols';
 import { slopeTileUrl, type SlopeFilter } from './slope-filter';
 
 /**
- * With only the global DEM, MapLibre loads it directly (fastest path). With a regional high-res
- * DEM configured, tiles go through our protocol, which merges the layers.
+ * The 3D mesh always comes straight from the global terrain tiles: MapLibre fetches and decodes
+ * them itself, so the terrain appears fast. Fine detail (relief shading, slope colours, the winter
+ * filter) comes from the best elevation available, computed in our workers.
  */
-const direct = DEM_LAYERS.length === 1 && DEM_LAYERS[0].encoding !== 'bil32' ? DEM_LAYERS[0] : null;
+const globalDem = DEM_LAYERS[DEM_LAYERS.length - 1];
 const demSource = {
   type: 'raster-dem' as const,
-  tiles: direct ? [direct.url].flat() : [`${DEM_PROTOCOL}://{z}/{x}/{y}`],
+  tiles: [globalDem.url].flat(),
   tileSize: 256,
-  maxzoom: Math.min(DEM_MAXZOOM, TERRAIN_MAXZOOM),
-  encoding: direct ? (direct.encoding as 'terrarium' | 'mapbox') : ('terrarium' as const),
+  maxzoom: Math.min(globalDem.maxzoom, TERRAIN_MAXZOOM),
+  encoding: globalDem.encoding === 'mapbox' ? ('mapbox' as const) : ('terrarium' as const),
 };
 
 export const DIFFICULTY_COLORS: Record<string, string> = {
@@ -76,6 +77,9 @@ export const LAYER_GROUPS: Record<Exclude<keyof Toggles, 'winter'>, string[]> = 
   hillshade: ['hillshade'],
 };
 
+/** The coarse base layer stops here; beyond it its tiles are just enlarged. */
+const BASE_MAXZOOM = 11;
+
 export function imageryTiles(winter: boolean) {
   return [`${IMAGERY_PROTOCOL}://{z}/{x}/{y}?mode=${winter ? 'winter' : 'summer'}`];
 }
@@ -86,6 +90,12 @@ export function buildStyle(
   const vis = (on: boolean) => ({ visibility: on ? ('visible' as const) : ('none' as const) });
   const layers: LayerSpecification[] = [
     { id: 'background', type: 'background', paint: { 'background-color': '#dfe6ee' } },
+    {
+      // Coarse copy of the imagery underneath: a handful of tiles that paint the whole view within
+      // seconds, so nothing is ever blank while the detailed tiles above are still processing.
+      id: 'imagery-base', type: 'raster', source: 'imagery-base',
+      paint: { 'raster-fade-duration': 0, 'raster-resampling': 'linear' },
+    },
     {
       id: 'imagery', type: 'raster', source: 'imagery',
       paint: { 'raster-fade-duration': 120, 'raster-resampling': 'linear' },
@@ -271,6 +281,7 @@ export function buildStyle(
         type: 'raster', tiles: imageryTiles(t.winter), tileSize: imageryTileSize, maxzoom: IMAGERY_MAXZOOM,
         attribution: imageryAttribution,
       },
+      'imagery-base': { type: 'raster', tiles: imageryTiles(t.winter), tileSize: 256, maxzoom: BASE_MAXZOOM },
       dem: { ...demSource, attribution: DEM_LAYERS.map((l) => l.attribution).join(' · ') },
       'dem-hillshade': demSource,
       slope: { type: 'raster', tiles: [slopeTileUrl(slopeFilter)], tileSize: imageryTileSize, minzoom: 8, maxzoom: DEM_MAXZOOM + 1 },

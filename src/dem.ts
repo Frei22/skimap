@@ -279,23 +279,6 @@ export function getDemTile(z: number, x: number, y: number): Promise<Float32Arra
   return p;
 }
 
-/** Re-encodes a DEM tile as terrarium RGBA so MapLibre can use it for 3D terrain. */
-export async function demTileAsTerrarium(z: number, x: number, y: number): Promise<ImageBitmap | null> {
-  const t = await getDemTile(z, x, y);
-  if (!t) return null;
-  const px = new Uint8ClampedArray(TILE * TILE * 4);
-  for (let i = 0, p = 0; i < t.length; i++, p += 4) {
-    const v = t[i] + 32768;
-    px[p] = Math.floor(v / 256);
-    px[p + 1] = Math.floor(v) % 256;
-    px[p + 2] = Math.floor((v - Math.floor(v)) * 256);
-    px[p + 3] = 255;
-  }
-  const canvas = new OffscreenCanvas(TILE, TILE);
-  canvas.getContext('2d')!.putImageData(new ImageData(px, TILE, TILE), 0, 0);
-  return createImageBitmap(canvas);
-}
-
 /** Zoom at which the best elevation layer covering this tile has full resolution. */
 function nativeZoom(z: number, x: number, y: number) {
   for (const { layer } of layers) {

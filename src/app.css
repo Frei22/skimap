@@ -40,7 +40,7 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-#map { position: absolute; inset: 0; }
+#map { position: fixed; inset: 0; } /* fixed: robust to iOS Safari's collapsing address bar */
 
 button { font: inherit; color: inherit; cursor: pointer; }
 
