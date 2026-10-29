@@ -2,7 +2,7 @@
 // turned into a winter scene (snow cover from elevation + slope, frosted forest, low-sun shading).
 import { IMAGERY, type ImageryProvider } from './config';
 import { FLAT_SHADE, terrainForTile } from './dem';
-import { snowlineAt } from './regions';
+import { climateAt } from './regions';
 import { TILE, clamp, decodePixels, encodePixels, parseTileUrl, smoothstep, tileBounds } from './tiles';
 
 
@@ -125,40 +125,53 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
   const terrain = await terrainForTile(z, x, y, true);
   if (!terrain) return px;
   const b = tileBounds(z, x, y);
-  const snowline = snowlineAt((b.west + b.east) / 2, (b.north + b.south) / 2);
+  const { snowline, treeline } = climateAt((b.west + b.east) / 2, (b.north + b.south) / 2);
   const { elevation, slope, shade } = terrain;
   // Detail strength: at low zooms the photo is mostly colour, not texture.
   const detail = smoothstep(10, 16, z);
 
+  // Classify on lightly smoothed colour, so JPEG blocks and single pixels can't flip a decision;
+  // the unsmoothed photo still provides the texture.
+  const soft = boxBlur(px, 2);
+
   for (let i = 0, p = 0; i < elevation.length; i++, p += 4) {
     const r = px[p] / 255, g = px[p + 1] / 255, bl = px[p + 2] / 255;
     const L = 0.299 * r + 0.587 * g + 0.114 * bl;
-    const greenness = g - (r + bl) / 2;
+    const sr0 = soft[p] / 255, sg0 = soft[p + 1] / 255, sb0 = soft[p + 2] / 255;
+    const sL = 0.299 * sr0 + 0.587 * sg0 + 0.114 * sb0;
+    const greenness = sg0 - (sr0 + sb0) / 2;
 
     // Lakes: flat and blue-green. Above the snowline they're frozen and snowed over.
-    const water = (1 - smoothstep(2, 5, slope[i])) * clamp((bl - r) * 10) * clamp((g - r) * 10 + 0.5);
-    // Forest: dark and green-ish (shadows are blue-ish, so they don't count).
-    const tree = clamp((0.36 - L) / 0.16) * clamp((greenness + 0.005) * 25) * (1 - water);
+    const water = (1 - smoothstep(2, 5, slope[i])) * clamp((sb0 - sr0) * 10) * clamp((sg0 - sr0) * 10 + 0.5);
+    // Forest: below the treeline, dark pixels are trees, even in deep shadow where the photo has no
+    // green left (IGN's morning imagery is nearly black on north-facing forest). Blue shadow on snow
+    // or water doesn't count.
+    const belowTreeline = 1 - smoothstep(treeline - 200, treeline + 100, elevation[i]);
+    const tree = clamp((0.4 - sL) / 0.2) * clamp((greenness + 0.04) * 25) * belowTreeline * (1 - water);
     // Snow holds on open ground above the snowline and on anything not cliff-steep. Dark, non-green
     // pixels on steep ground are rock faces: the DEM smooths cliffs out, so the photo gets a say.
     const above = smoothstep(snowline - 250, snowline + 250, elevation[i]);
     const s = slope[i];
-    const rock = clamp((0.55 - L) / 0.25) * (1 - clamp(greenness * 15));
+    const rock = clamp((0.55 - sL) / 0.25) * (1 - clamp(greenness * 15)) * (1 - tree);
     const stick = (1 - smoothstep(46, 62, s)) * (1 - rock) + (1 - smoothstep(30, 46, s)) * rock;
-    const snow = above * stick * (1 - 0.8 * tree);
+    // The gaps between crowns (lighter than the canopy around them) get snow too.
+    const gap = clamp((L - sL) * 6);
+    const snow = above * stick * (1 - 0.85 * tree * (1 - gap));
 
-    // Snow, shaded by the terrain, with the photo's luminance kept as fine texture.
-    const [sr, sg, sb] = snowColour(shade[i], 1 + detail * 0.35 * (L - 0.45));
+    // Snow, shaded by the terrain, with the photo's light and shadow kept as texture (roof edges,
+    // cast shadows, tracks), more so when zoomed in.
+    const [sr, sg, sb] = snowColour(shade[i], 1 + detail * 0.55 * (Math.min(L, 0.75) - 0.45));
 
-    // Ground that isn't snowed in: cooler, less saturated, a bit darker (forest keeps more green).
-    const gray = L;
-    const sat = 0.55 + 0.25 * tree;
-    let gr = (gray + (r - gray) * sat) * 0.86, gg = (gray + (g - gray) * sat) * 0.9, gb = (gray + (bl - gray) * sat) * 0.94 + 0.02;
-    // Frosted forest.
-    const frost = 0.2 * above;
-    gr = gr + (0.85 - gr) * frost * tree;
-    gg = gg + (0.88 - gg) * frost * tree;
-    gb = gb + (0.95 - gb) * frost * tree;
+    // Ground that isn't snowed in: cooler, less saturated, a bit darker...
+    let gr = (L + (r - L) * 0.55) * 0.86, gg = (L + (g - L) * 0.55) * 0.9, gb = (L + (bl - L) * 0.55) * 0.94 + 0.02;
+    // ...except conifers: dark winter green with the photo's crown texture, lightly frosted.
+    const frost = 0.15 * above;
+    const tr = (0.55 * L + 0.03) * (1 - frost) + 0.85 * frost;
+    const tg = (0.8 * L + 0.07) * (1 - frost) + 0.88 * frost;
+    const tb = (0.62 * L + 0.06) * (1 - frost) + 0.95 * frost;
+    gr += (tr - gr) * tree;
+    gg += (tg - gg) * tree;
+    gb += (tb - gb) * tree;
 
     px[p] = 255 * clamp(gr + (sr - gr) * snow);
     px[p + 1] = 255 * clamp(gg + (sg - gg) * snow);
@@ -166,6 +179,30 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
     px[p + 3] = 255;
   }
   return px;
+}
+
+/** Box blur of an RGBA tile with the given radius (two separable passes, edges clamped). */
+function boxBlur(px: Uint8ClampedArray, radius: number) {
+  const tmp = new Float32Array(px.length), out = new Uint8ClampedArray(px.length);
+  const n = 2 * radius + 1;
+  for (let pass = 0; pass < 2; pass++) {
+    const src = pass === 0 ? px : tmp, dst = pass === 0 ? tmp : out;
+    for (let a = 0; a < TILE; a++) {
+      for (let c = 0; c < 3; c++) {
+        let sum = 0;
+        const idx = (k: number) => {
+          const kk = Math.min(TILE - 1, Math.max(0, k));
+          return (pass === 0 ? a * TILE + kk : kk * TILE + a) * 4 + c;
+        };
+        for (let k = -radius; k <= radius; k++) sum += src[idx(k)];
+        for (let k = 0; k < TILE; k++) {
+          dst[idx(k)] = sum / n;
+          sum += src[idx(k + radius + 1)] - src[idx(k - radius)];
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /** Snow colour for a relative illumination: near-white on flat ground, cold blue in shade. */
@@ -179,7 +216,7 @@ async function syntheticRelief(z: number, x: number, y: number, winter: boolean)
   const t = await terrainForTile(z, x, y, true);
   if (!t) return null;
   const b = tileBounds(z, x, y);
-  const snowline = winter ? snowlineAt((b.west + b.east) / 2, (b.north + b.south) / 2) : 2900;
+  const snowline = winter ? climateAt((b.west + b.east) / 2, (b.north + b.south) / 2).snowline : 2900;
   const px = new Uint8ClampedArray(TILE * TILE * 4);
   for (let i = 0, p = 0; i < t.elevation.length; i++, p += 4) {
     const h = t.elevation[i], s = t.slope[i];

@@ -28,9 +28,14 @@ holes from the next.
 
 | Layer | Resolution | Coverage | Licence |
 | --- | --- | --- | --- |
-| IGN RGE ALTI (Géoplateforme WMS, raw float32) | 1 m | France | Licence Ouverte Etalab 2.0 |
+| IGN LiDAR HD terrain model, RGE ALTI where not yet flown (Géoplateforme WMS, raw float32) | ~1 m | France | Licence Ouverte Etalab 2.0 |
 | Your own PMTiles via `VITE_DEM_LAYERS` | as built | anywhere | as source |
 | Mapzen Terrain Tiles (AWS Open Data) | ~25 m in Europe (EU-DEM), 30 m elsewhere | World | Free with attribution |
+
+IGN's service stores the elevation on a lat/lon grid and resamples anything else with
+nearest-neighbour, which duplicates every third row in Web Mercator and stripes the slopes. The app
+therefore asks for the native lat/lon pixels (`grid: 'geographic'`) and reprojects them in the
+browser with a cubic. The whole French side of the Mont Blanc massif is covered by LiDAR HD.
 
 The global Mapzen tiles are served at up to zoom 14 but contain 25 m data interpolated upwards.
 `resolution` in the config makes the app read them at their true resolution and upsample smoothly,

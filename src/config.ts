@@ -11,6 +11,12 @@ export type DemLayer = {
   url: string | string[];
   /** terrarium/mapbox: RGB-encoded PNG. bil32: raw little-endian float32 grid (IGN WMS). */
   encoding: DemEncoding;
+  /**
+   * 'geographic': the service stores a lat/lon grid with square-degree pixels and resamples
+   * anything else with nearest-neighbour (duplicated rows → striped slopes). We request that
+   * native grid ({bbox-epsg-4326}, {width}, {height}) and reproject it in the browser instead.
+   */
+  grid?: 'mercator' | 'geographic';
   minzoom: number;
   maxzoom: number;
   /**
@@ -37,14 +43,16 @@ export const DEM_LAYERS: DemLayer[] = [
     ? []
     : [
         {
-          name: 'IGN RGE ALTI 1 m',
-          url: 'https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ELEVATION.ELEVATIONGRIDCOVERAGE.HIGHRES&STYLES=&CRS=EPSG:3857&BBOX={bbox-epsg-3857}&WIDTH=256&HEIGHT=256&FORMAT=image/x-bil;bits=32',
+          // LiDAR HD terrain model (~1 m) where flown, RGE ALTI elsewhere in France.
+          name: 'IGN LiDAR HD / RGE ALTI',
+          url: 'https://data.geopf.fr/wms-r/wms?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.MIXED.WGS84G&STYLES=&CRS=EPSG:4326&BBOX={bbox-epsg-4326}&WIDTH={width}&HEIGHT={height}&FORMAT=image/x-bil;bits=32',
           encoding: 'bil32' as const,
-          minzoom: 11,
+          grid: 'geographic' as const,
+          minzoom: 12,
           maxzoom: 16,
           resolution: 1,
           bounds: [-5.2, 41.3, 9.6, 51.1] as [number, number, number, number],
-          attribution: '<a href="https://geoservices.ign.fr/rgealti" target="_blank">Elevation: IGN RGE ALTI</a>',
+          attribution: '<a href="https://geoservices.ign.fr/lidarhd" target="_blank">Elevation: IGN LiDAR HD, RGE ALTI</a>',
         },
       ]),
   {
@@ -138,5 +146,5 @@ export const GLYPHS = 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.p
 export const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
 ];

@@ -73,7 +73,7 @@ MapLibre GL JS 6 (globe + 3D terrain)
 | --- | --- |
 | `src/config.ts` | Imagery providers and elevation layers, best first |
 | `src/regions.ts` | Regions: area, start camera, snowline, avalanche bulletin |
-| `src/dem.ts` | Elevation engine: fetches/decodes DEM tiles (PNG, IGN float grids, PMTiles), merges layers, reads each at its true resolution and upsamples bicubically across tile borders, computes slope, aspect and shading |
+| `src/dem.ts` | Elevation engine: fetches/decodes DEM tiles (PNG, IGN LiDAR float grids, PMTiles), merges layers, reads each at its true resolution and upsamples bicubically across tile borders, computes slope, aspect and shading |
 | `src/imagery.ts` | Orthophoto mosaic and the winter filter |
 | `src/slope.ts` | Slope-class tiles |
 | `src/osm.ts` | OpenStreetMap loader and conversion |

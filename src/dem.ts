@@ -34,6 +34,7 @@ function makeFetcher(layer: DemLayer): Fetcher {
       return decode(await decodePixels(new Blob([res.data])), layer.encoding);
     };
   }
+  if (layer.grid === 'geographic') return (z, x, y, signal) => fetchGeographic(layer, z, x, y, signal);
   return async (z, x, y, signal) => {
     const res = await fetch(fillTemplate(pick(layer.url, x, y), z, x, y), { signal });
     if (res.status === 404 || res.status === 204) return null;
@@ -44,20 +45,58 @@ function makeFetcher(layer: DemLayer): Fetcher {
 }
 
 /**
+ * Fetches a lat/lon grid with square-degree pixels the width of our tile's pixels (so columns
+ * line up exactly, plus a margin of PAD) and reprojects it onto the Web Mercator tile. Only the
+ * rows need interpolating, which a cubic along each column does smoothly.
+ */
+async function fetchGeographic(layer: DemLayer, z: number, x: number, y: number, signal?: AbortSignal) {
+  const PAD = 3;
+  const b = tileBounds(z, x, y);
+  const r = 360 / (TILE * 2 ** z); // degrees per pixel, same in lat and lon
+  const c0 = x * TILE - PAD; // column index of the first requested pixel, counted from -180°
+  const row0 = Math.floor((90 - b.north) / r) - PAD, row1 = Math.ceil((90 - b.south) / r) + PAD;
+  const W = TILE + 2 * PAD, H = row1 - row0;
+  const minLon = c0 * r - 180, maxLat = 90 - row0 * r;
+  const url = pick(layer.url, x, y)
+    .replace('{bbox-epsg-4326}', `${(90 - row1 * r).toFixed(9)},${minLon.toFixed(9)},${maxLat.toFixed(9)},${(minLon + W * r).toFixed(9)}`)
+    .replace('{width}', `${W}`)
+    .replace('{height}', `${H}`);
+  const res = await fetch(url, { signal });
+  if (res.status === 404 || res.status === 204) return null;
+  if (!res.ok) throw new Error(`DEM ${res.status}`);
+  const src = decodeBil(await res.arrayBuffer(), W * H);
+  if (!src) return null;
+  const out = new Float32Array(TILE * TILE);
+  for (let j = 0; j < TILE; j++) {
+    const sy = (maxLat - tile2lat(y + (j + 0.5) / TILE, z)) / r - 0.5;
+    const y0 = Math.floor(sy), t = sy - y0;
+    const rows = [y0 - 1, y0, y0 + 1, y0 + 2].map((k) => Math.min(H - 1, Math.max(0, k)) * W);
+    for (let i = 0; i < TILE; i++) {
+      const col = i + PAD;
+      const p0 = src[rows[0] + col], p1 = src[rows[1] + col], p2 = src[rows[2] + col], p3 = src[rows[3] + col];
+      out[j * TILE + i] =
+        p0 === NODATA || p1 === NODATA || p2 === NODATA || p3 === NODATA ? (t < 0.5 ? p1 : p2) : cubic(p0, p1, p2, p3, t);
+    }
+  }
+  return out;
+}
+
+/**
  * Raw float32 grid (IGN's WMS `image/x-bil;bits=32`). Anything that doesn't look like a sane
  * 256² elevation grid (an XML error page, wrong size, garbage values) is rejected.
  */
-function decodeBil(buf: ArrayBuffer): Float32Array {
-  if (buf.byteLength !== TILE * TILE * 4) throw new Error(`BIL size ${buf.byteLength}`);
+function decodeBil(buf: ArrayBuffer, samples = TILE * TILE): Float32Array | null {
+  if (buf.byteLength !== samples * 4) throw new Error(`BIL size ${buf.byteLength}`);
   const v = new Float32Array(buf);
-  let bad = 0;
+  let bad = 0, valid = 0;
   for (let i = 0; i < v.length; i++) {
     const h = v[i];
     if (!(h > -1000)) v[i] = NODATA; // IGN no-data is -99999
     else if (h > 9000) bad++;
+    else valid++;
   }
   if (bad > v.length * 0.01) throw new Error('BIL values out of range');
-  return v;
+  return valid ? v : null; // all no-data (outside coverage): same as a missing tile
 }
 
 function decode(px: Uint8ClampedArray, encoding: Exclude<DemEncoding, 'bil32'>): Float32Array {
@@ -267,9 +306,9 @@ function nativeZoom(z: number, x: number, y: number) {
  * so slope can be computed without seams. Reads DEM tiles at their native resolution and,
  * when zoomed in further, upsamples bicubically across tile borders.
  */
-export function demWindow(z: number, x: number, y: number): Promise<Float32Array | null> {
+export function demWindow(z: number, x: number, y: number, border = 1): Promise<Float32Array | null> {
   const dz = nativeZoom(z, x, y);
-  return resample((tx, ty) => getDemTile(dz, tx, ty), dz, z, x, y, 1);
+  return resample((tx, ty) => getDemTile(dz, tx, ty), dz, z, x, y, border);
 }
 
 export type Terrain = { elevation: Float32Array; slope: Float32Array; aspect: Float32Array; shade: Float32Array };
@@ -292,33 +331,38 @@ export const FLAT_SHADE = LIGHTS.reduce((a, l) => a + l.z, 0);
  * illumination for tile (z,x,y), using Horn's 3×3 gradient.
  */
 export async function terrainForTile(z: number, x: number, y: number, withShade = false): Promise<Terrain | null> {
-  const win = await demWindow(z, x, y);
+  // Snow buries metre-scale bumps (walls, boulders, embankments), so shading uses gradients over
+  // ~3 m either side; slope and aspect keep the full resolution of the elevation model.
+  const midLat = tile2lat(y + 0.5, z);
+  const k = withShade ? Math.min(6, Math.max(1, Math.round(3 / metersPerPixel(z, midLat)))) : 1;
+  const win = await demWindow(z, x, y, k);
   if (!win) return null;
-  const W = TILE + 2;
+  const W = TILE + 2 * k;
   const elevation = new Float32Array(TILE * TILE);
   const slope = new Float32Array(TILE * TILE);
   const aspect = new Float32Array(TILE * TILE);
   const shade = new Float32Array(withShade ? TILE * TILE : 0);
+  // Horn's 3×3 gradient with sample spacing `step` (pixels) around the pixel at (i, j).
+  const horn = (i: number, j: number, step: number, cell: number) => {
+    const c0 = (j + k) * W + i + k;
+    const v = (dx: number, dy: number) => win[c0 + dy * step * W + dx * step];
+    const dzdx = (v(1, -1) + 2 * v(1, 0) + v(1, 1) - (v(-1, -1) + 2 * v(-1, 0) + v(-1, 1))) / (8 * cell * step); // + east
+    const dzdy = (v(-1, 1) + 2 * v(0, 1) + v(1, 1) - (v(-1, -1) + 2 * v(0, -1) + v(1, -1))) / (8 * cell * step); // + south
+    return [dzdx, dzdy];
+  };
   for (let j = 0; j < TILE; j++) {
-    const lat = (Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + (j + 0.5) / TILE)) / 2 ** z))) * 180) / Math.PI;
-    const cell = metersPerPixel(z, lat);
+    const cell = metersPerPixel(z, tile2lat(y + (j + 0.5) / TILE, z));
     for (let i = 0; i < TILE; i++) {
-      const r0 = j * W + i, r1 = r0 + W, r2 = r1 + W;
-      const a = win[r0], b = win[r0 + 1], c = win[r0 + 2];
-      const d = win[r1], e = win[r1 + 1], f = win[r1 + 2];
-      const g = win[r2], h = win[r2 + 1], k = win[r2 + 2];
-      const dzdx = (c + 2 * f + k - (a + 2 * d + g)) / (8 * cell); // + towards east
-      const dzdy = (g + 2 * h + k - (a + 2 * b + c)) / (8 * cell); // + towards south
-      const grad = Math.hypot(dzdx, dzdy);
       const o = j * TILE + i;
-      elevation[o] = e;
-      const s = Math.atan(grad);
-      slope[o] = (s * 180) / Math.PI;
+      const [dzdx, dzdy] = horn(i, j, 1, cell);
+      elevation[o] = win[(j + k) * W + i + k];
+      slope[o] = (Math.atan(Math.hypot(dzdx, dzdy)) * 180) / Math.PI;
       // Downslope direction: towards decreasing elevation.
       aspect[o] = ((Math.atan2(-dzdx, dzdy) * 180) / Math.PI + 360) % 360; // 0 = north, clockwise
       if (withShade) {
         // Lambert shading per light; surface normal (-dzdx, dzdy, 1) in an east/north/up frame.
-        const nx = -dzdx, ny = dzdy;
+        const [sx, sy] = k === 1 ? [dzdx, dzdy] : horn(i, j, k, cell);
+        const nx = -sx, ny = sy;
         const len = Math.hypot(nx, ny, 1);
         let sh = 0;
         for (const l of LIGHTS) sh += Math.max(0, nx * l.x + ny * l.y + l.z);
