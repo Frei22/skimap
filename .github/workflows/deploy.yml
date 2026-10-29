@@ -44,6 +44,7 @@ jobs:
 
       - name: Pre-bake pistes & lifts from OpenStreetMap
         run: npm run fetch-osm
+        timeout-minutes: 12
         continue-on-error: true # the app falls back to live Overpass queries
 
       - name: Restore Swedish elevation

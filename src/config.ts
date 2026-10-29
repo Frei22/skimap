@@ -49,7 +49,7 @@ export const DEM_LAYERS: DemLayer[] = [
           encoding: 'bil32' as const,
           grid: 'geographic' as const,
           minzoom: 12,
-          maxzoom: 16,
+          maxzoom: 17, // IGN's finest level: ~0.8 m × 1.2 m at 46°N
           resolution: 1,
           bounds: [-5.2, 41.3, 9.6, 51.1] as [number, number, number, number],
           attribution: '<a href="https://geoservices.ign.fr/lidarhd" target="_blank">Elevation: IGN LiDAR HD, RGE ALTI</a>',

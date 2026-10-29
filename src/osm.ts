@@ -86,7 +86,10 @@ async function fromOverpass(z: number, x: number, y: number, signal?: AbortSigna
   let lastErr: unknown;
   for (const url of OVERPASS_ENDPOINTS) {
     try {
-      const res = await fetch(url, { method: 'POST', body, signal, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+      const res = await fetch(url, {
+        method: 'POST', body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        signal: signal ?? AbortSignal.timeout(60_000), // a stalled server shouldn't leave the spinner up forever
+      });
       if (!res.ok) throw new Error(`Overpass ${res.status}`);
       const json = await res.json();
       return osmToFeatures(json.elements);

@@ -3,7 +3,7 @@
 import { IMAGERY, type ImageryProvider } from './config';
 import { FLAT_SHADE, terrainForTile } from './dem';
 import { climateAt } from './regions';
-import { TILE, clamp, decodePixels, encodePixels, parseTileUrl, smoothstep, tileBounds } from './tiles';
+import { TILE, clamp, decodePixels, encodePixels, metersPerPixel, parseTileUrl, smoothstep, tile2lat, tileBounds } from './tiles';
 
 
 
@@ -135,6 +135,21 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
   // the unsmoothed photo still provides the texture.
   const soft = boxBlur(px, 2);
 
+  // Canopy texture: forest is busy (crowns and their shadows), meadow is smooth even where it's
+  // just as dark. Local contrast over a window of a few crowns (~5 m) tells them apart, once the
+  // pixels are small enough to resolve crowns at all.
+  const mpp = metersPerPixel(z, tile2lat(y + 0.5, z));
+  const textureWeight = 1 - smoothstep(3, 8, mpp);
+  const R = Math.min(8, Math.max(1, Math.round(5 / mpp)));
+  const lum = new Float32Array(TILE * TILE), lum2 = new Float32Array(TILE * TILE);
+  for (let i = 0, p = 0; i < lum.length; i++, p += 4) {
+    lum[i] = (0.299 * px[p] + 0.587 * px[p + 1] + 0.114 * px[p + 2]) / 255;
+    lum2[i] = lum[i] * lum[i];
+  }
+  // Two box passes ≈ a Gaussian: no square halos around lone trees.
+  const r2 = Math.max(1, Math.ceil(R * 0.7));
+  const localMean = blur1(blur1(lum, r2), r2), localSq = blur1(blur1(lum2, r2), r2);
+
   for (let i = 0, p = 0; i < elevation.length; i++, p += 4) {
     const r = px[p] / 255, g = px[p + 1] / 255, bl = px[p + 2] / 255;
     const L = 0.299 * r + 0.587 * g + 0.114 * bl;
@@ -148,16 +163,21 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
     // green left (IGN's morning imagery is nearly black on north-facing forest). Blue shadow on snow
     // or water doesn't count.
     const belowTreeline = 1 - smoothstep(treeline - 200, treeline + 100, elevation[i]);
-    const tree = clamp((0.4 - sL) / 0.2) * clamp((greenness + 0.04) * 25) * belowTreeline * (1 - water);
+    const m = localMean[i];
+    const contrast = Math.sqrt(Math.max(0, localSq[i] - m * m)) / (m + 0.04);
+    // Measured on IGN's 20 cm imagery: conifer canopy ~0.13–0.16, alpine meadow ~0.03.
+    const canopy = 1 - textureWeight + textureWeight * smoothstep(0.05, 0.11, contrast);
+    // Within forest, a crown is darker than its surroundings; the lighter gaps get snow. This also
+    // keeps the meadow next to a lone tree white.
+    const crown = 1 - textureWeight + textureWeight * clamp((m - L) * 15 + 0.6);
+    const tree = clamp((0.4 - sL) / 0.16) * clamp((greenness + 0.04) * 25) * canopy * crown * belowTreeline * (1 - water);
     // Snow holds on open ground above the snowline and on anything not cliff-steep. Dark, non-green
     // pixels on steep ground are rock faces: the DEM smooths cliffs out, so the photo gets a say.
     const above = smoothstep(snowline - 250, snowline + 250, elevation[i]);
     const s = slope[i];
     const rock = clamp((0.55 - sL) / 0.25) * (1 - clamp(greenness * 15)) * (1 - tree);
     const stick = (1 - smoothstep(46, 62, s)) * (1 - rock) + (1 - smoothstep(30, 46, s)) * rock;
-    // The gaps between crowns (lighter than the canopy around them) get snow too.
-    const gap = clamp((L - sL) * 6);
-    const snow = above * stick * (1 - (birch ? 0.35 : 0.85) * tree * (1 - gap));
+    const snow = above * stick * (1 - (birch ? 0.35 : 0.97) * tree);
 
     // Snow, shaded by the terrain, with the photo's light and shadow kept as texture (roof edges,
     // cast shadows, tracks), more so when zoomed in. Where the photo already shows snow (winter
@@ -165,10 +185,10 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
     const vDem = snowLight(shade[i]);
     // Fine detail from the photo (L - sL), but only a little of its broad light: summer photos
     // carry their own cast shadows, which don't belong on the snow.
-    const vTex = vDem * (1 + detail * (0.9 * (L - sL) + 0.22 * (Math.min(sL, 0.75) - 0.45)));
+    const vTex = vDem * (1 + detail * (1.4 * (L - sL) + 0.22 * (Math.min(sL, 0.75) - 0.45)));
     const satS = Math.max(sr0, sg0, sb0) - Math.min(sr0, sg0, sb0);
     const photoSnow = clamp((sL - 0.6) / 0.2) * clamp(1 - satS * 5);
-    const vPhoto = (L / 0.88) * (1 + 0.5 * (vDem - 0.93));
+    const vPhoto = (L / 0.88) * (1 + 0.5 * (vDem - 0.97));
     const [sr, sg, sb] = snowTint(vTex + (vPhoto - vTex) * photoSnow);
 
     // Ground that isn't snowed in: cooler, less saturated, a bit darker...
@@ -176,9 +196,9 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
     // ...except forest: conifers in dark winter green with the photo's crown texture, lightly frosted;
     // bare birch as a grey-brown haze.
     const frost = 0.15 * above;
-    const tr = birch ? 0.42 + 0.4 * L : (0.55 * L + 0.03) * (1 - frost) + 0.85 * frost;
-    const tg = birch ? 0.38 + 0.4 * L : (0.8 * L + 0.07) * (1 - frost) + 0.88 * frost;
-    const tb = birch ? 0.36 + 0.4 * L : (0.62 * L + 0.06) * (1 - frost) + 0.95 * frost;
+    const tr = birch ? 0.42 + 0.4 * L : (0.5 * L + 0.02) * (1 - frost) + 0.85 * frost;
+    const tg = birch ? 0.38 + 0.4 * L : (0.8 * L + 0.06) * (1 - frost) + 0.88 * frost;
+    const tb = birch ? 0.36 + 0.4 * L : (0.6 * L + 0.05) * (1 - frost) + 0.95 * frost;
     gr += (tr - gr) * tree;
     gg += (tg - gg) * tree;
     gb += (tb - gb) * tree;
@@ -189,6 +209,28 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
     px[p + 3] = 255;
   }
   return px;
+}
+
+/** Box blur of a single-channel tile (two separable passes, edges clamped). */
+function blur1(src: Float32Array, radius: number) {
+  const tmp = new Float32Array(src.length), out = new Float32Array(src.length);
+  const n = 2 * radius + 1;
+  for (let pass = 0; pass < 2; pass++) {
+    const a = pass === 0 ? src : tmp, b = pass === 0 ? tmp : out;
+    for (let line = 0; line < TILE; line++) {
+      const at = (k: number) => {
+        const kk = Math.min(TILE - 1, Math.max(0, k));
+        return pass === 0 ? line * TILE + kk : kk * TILE + line;
+      };
+      let sum = 0;
+      for (let k = -radius; k <= radius; k++) sum += a[at(k)];
+      for (let k = 0; k < TILE; k++) {
+        b[at(k)] = sum / n;
+        sum += a[at(k + radius + 1)] - a[at(k - radius)];
+      }
+    }
+  }
+  return out;
 }
 
 /** Box blur of an RGBA tile with the given radius (two separable passes, edges clamped). */
@@ -215,11 +257,16 @@ function boxBlur(px: Uint8ClampedArray, radius: number) {
   return out;
 }
 
-/** Brightness of snow for a relative illumination: ~0.93 on flat ground, up to 1.05 facing the light. */
-const snowLight = (shade: number) => clamp(0.93 + 0.95 * (shade - FLAT_SHADE), 0.5, 1.05);
+/** Brightness of snow for a relative illumination: ~0.97 on flat ground, more facing the light (soft-clipped later). */
+const snowLight = (shade: number) => clamp(0.97 + 0.95 * (shade - FLAT_SHADE), 0.5, 1.15);
 
 /** Snow colour for a brightness: white in the light, increasingly cold blue in shade. */
-const snowTint = (v: number): [number, number, number] => [v - (1 - v) * 0.16, v - (1 - v) * 0.05, v + (1 - v) * 0.22];
+function snowTint(v: number): [number, number, number] {
+  // Soft knee instead of clipping: sunlit snow stays just below white, so its texture survives.
+  const k = v < 0.82 ? v : 0.82 + 0.17 * Math.tanh((v - 0.82) / 0.17);
+  const warm = Math.max(0, k - 0.93) * 0.15; // a touch of warmth in the light
+  return [k - (1 - k) * 0.16 + warm, k - (1 - k) * 0.05, k + (1 - k) * 0.22 - warm * 0.6];
+}
 
 /** No imagery anywhere (offline provider, gap in coverage): draw the terrain itself as a shaded relief. */
 async function syntheticRelief(z: number, x: number, y: number, winter: boolean) {

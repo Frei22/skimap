@@ -12,7 +12,7 @@ const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'data'
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function overpass(query: string) {
-  const attempts = Number(process.env.OVERPASS_ATTEMPTS ?? 6);
+  const attempts = Number(process.env.OVERPASS_ATTEMPTS ?? 4);
   for (let attempt = 0; attempt < attempts; attempt++) {
     const url = OVERPASS_ENDPOINTS[attempt % OVERPASS_ENDPOINTS.length];
     try {
@@ -20,6 +20,7 @@ async function overpass(query: string) {
         method: 'POST',
         body: 'data=' + encodeURIComponent(query),
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'skimap-prefetch/1.0' },
+        signal: AbortSignal.timeout(100_000), // a stalled server must not hang the deploy
       });
       if (res.ok) return (await res.json()) as { elements: Parameters<typeof osmToFeatures>[0] };
       console.warn(`  ${url} → ${res.status}`);

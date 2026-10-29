@@ -24,7 +24,7 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 // ---------------------------------------------------------------- settings
 type Settings = Toggles & { region: string; exaggeration: number; hd: boolean; slopeFilter: SlopeFilter };
-const SETTINGS_KEY = 'skimap:settings:v1';
+const SETTINGS_KEY = 'skimap:settings:v2';
 const defaults: Settings = {
   region: 'chamonix',
   winter: true,
@@ -34,12 +34,18 @@ const defaults: Settings = {
   labels: true,
   hillshade: false,
   exaggeration: 1,
-  hd: window.devicePixelRatio >= 2 && !matchMedia('(pointer: coarse)').matches,
+  hd: window.devicePixelRatio >= 2, // detail first; switch off under Layers if a phone struggles
   slopeFilter: DEFAULT_SLOPE_FILTER,
 };
 const settings: Settings = { ...defaults };
 try {
-  Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}'));
+  const saved = localStorage.getItem(SETTINGS_KEY);
+  if (saved) Object.assign(settings, JSON.parse(saved));
+  else {
+    // v1 → v2: keep everything except "sharp imagery", which is now on by default on retina screens.
+    const { hd: _, ...v1 } = JSON.parse(localStorage.getItem('skimap:settings:v1') ?? '{}');
+    Object.assign(settings, v1);
+  }
 } catch {
   /* storage unavailable */
 }
