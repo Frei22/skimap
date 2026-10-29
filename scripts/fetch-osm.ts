@@ -21,7 +21,7 @@ async function overpass(query: string) {
         method: 'POST',
         body: 'data=' + encodeURIComponent(query),
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'skimap-prefetch/1.0' },
-        signal: AbortSignal.timeout(170_000), // a stalled server must not hang the deploy
+        signal: AbortSignal.timeout(Number(process.env.OVERPASS_TIMEOUT_S ?? 170) * 1000), // a stalled server must not hang the deploy
       });
       if (res.ok) return (await res.json()) as { elements: Parameters<typeof osmToFeatures>[0] };
       console.warn(`  ${url} → ${res.status}`);
