@@ -177,19 +177,29 @@ async function winterize(px: Uint8ClampedArray, z: number, x: number, y: number)
     const s = slope[i];
     const rock = clamp((0.55 - sL) / 0.25) * (1 - clamp(greenness * 15)) * (1 - tree);
     const stick = (1 - smoothstep(46, 62, s)) * (1 - rock) + (1 - smoothstep(30, 46, s)) * rock;
-    const snow = above * stick * (1 - (birch ? 0.35 : 0.97) * tree);
+    // Light-grey rock outcrops above the treeline (granite blocks, boulder fields) are brighter than
+    // the dark-rock rule catches: grey, textured, mid-brightness. They stay visible, dusted with snow.
+    const satS = Math.max(sr0, sg0, sb0) - Math.min(sr0, sg0, sb0);
+    const structure = smoothstep(0.04, 0.12, contrast);
+    const outcrop = structure * (1 - clamp(satS * 6)) * smoothstep(treeline, treeline + 300, elevation[i]) *
+      smoothstep(0.3, 0.45, sL) * (1 - smoothstep(0.72, 0.85, sL));
+    const snow = above * stick * (1 - (birch ? 0.35 : 0.97) * tree) * (1 - 0.6 * outcrop);
 
     // Snow, shaded by the terrain, with the photo's light and shadow kept as texture (roof edges,
     // cast shadows, tracks), more so when zoomed in. Where the photo already shows snow (winter
     // imagery, glaciers), its own light is the real thing: keep it and add half the relief shading.
+    // Snow colour comes from the relief: white in the light, blue in shade. Where the photo already
+    // shows snow (glaciers, winter imagery) its own light is the real thing, so it leads instead.
     const vDem = snowLight(shade[i]);
-    // Fine detail from the photo (L - sL), but only a little of its broad light: summer photos
-    // carry their own cast shadows, which don't belong on the snow.
-    const vTex = vDem * (1 + detail * (1.4 * (L - sL) + 0.22 * (Math.min(sL, 0.75) - 0.45)));
-    const satS = Math.max(sr0, sg0, sb0) - Math.min(sr0, sg0, sb0);
     const photoSnow = clamp((sL - 0.6) / 0.2) * clamp(1 - satS * 5);
     const vPhoto = (L / 0.88) * (1 + 0.5 * (vDem - 0.97));
-    const [sr, sg, sb] = snowTint(vTex + (vPhoto - vTex) * photoSnow);
+    const tint = snowTint(vDem + (vPhoto - vDem) * photoSnow);
+    // Then the photo's fine detail as a neutral brightness change, so rocks, roofs and tree edges
+    // read grey rather than as blue shadow. Only where the photo has real structure: on open meadow
+    // the summer texture is grass and stones, which would look like dirty snow. Only a little of the
+    // photo's broad light, too: summer cast shadows don't belong on the snow.
+    const texF = 1 + (1 - photoSnow) * detail * (1.4 * structure * (L - sL) + 0.22 * (Math.min(sL, 0.75) - 0.45));
+    const sr = tint[0] * texF, sg = tint[1] * texF, sb = tint[2] * texF;
 
     // Ground that isn't snowed in: cooler, less saturated, a bit darker...
     let gr = (L + (r - L) * 0.55) * 0.86, gg = (L + (g - L) * 0.55) * 0.9, gb = (L + (bl - L) * 0.55) * 0.94 + 0.02;

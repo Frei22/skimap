@@ -331,10 +331,11 @@ export const FLAT_SHADE = LIGHTS.reduce((a, l) => a + l.z, 0);
  * illumination for tile (z,x,y), using Horn's 3×3 gradient.
  */
 export async function terrainForTile(z: number, x: number, y: number, withShade = false): Promise<Terrain | null> {
-  // Snow buries metre-scale bumps (walls, boulders, embankments), so shading uses gradients over
-  // ~3 m either side; slope and aspect keep the full resolution of the elevation model.
+  // Gradients over ~3 m either side: the scale of a crux or a step in a couloir, and wide enough to
+  // span two rows of the 1 m LiDAR grids, whose reprojection otherwise beats against the tile's
+  // pixel rows and stripes the slope. Snow also buries the metre-scale bumps (walls, boulders).
   const midLat = tile2lat(y + 0.5, z);
-  const k = withShade ? Math.min(6, Math.max(1, Math.round(3 / metersPerPixel(z, midLat)))) : 1;
+  const k = Math.min(6, Math.max(1, Math.round(3 / metersPerPixel(z, midLat))));
   const win = await demWindow(z, x, y, k);
   if (!win) return null;
   const W = TILE + 2 * k;
@@ -354,15 +355,14 @@ export async function terrainForTile(z: number, x: number, y: number, withShade 
     const cell = metersPerPixel(z, tile2lat(y + (j + 0.5) / TILE, z));
     for (let i = 0; i < TILE; i++) {
       const o = j * TILE + i;
-      const [dzdx, dzdy] = horn(i, j, 1, cell);
+      const [dzdx, dzdy] = horn(i, j, k, cell);
       elevation[o] = win[(j + k) * W + i + k];
       slope[o] = (Math.atan(Math.hypot(dzdx, dzdy)) * 180) / Math.PI;
       // Downslope direction: towards decreasing elevation.
       aspect[o] = ((Math.atan2(-dzdx, dzdy) * 180) / Math.PI + 360) % 360; // 0 = north, clockwise
       if (withShade) {
         // Lambert shading per light; surface normal (-dzdx, dzdy, 1) in an east/north/up frame.
-        const [sx, sy] = k === 1 ? [dzdx, dzdy] : horn(i, j, k, cell);
-        const nx = -sx, ny = sy;
+        const nx = -dzdx, ny = dzdy;
         const len = Math.hypot(nx, ny, 1);
         let sh = 0;
         for (const l of LIGHTS) sh += Math.max(0, nx * l.x + ny * l.y + l.z);
@@ -387,19 +387,19 @@ export async function elevationAt(lng: number, lat: number, z = DEM_MAXZOOM): Pr
 }
 
 /**
- * Slope (deg) and aspect (deg) at a point, from elevations 8 m either side: about the scale of
- * the slope you'd ski or trigger, and robust to boulder-sized bumps in a 1 m model.
+ * Slope (deg) and aspect (deg) at a point: Horn's 3×3 kernel with 3 m spacing, the same scale as
+ * the slope overlay, so a tapped point and the colour under it agree.
  */
 export async function slopeAt(lng: number, lat: number) {
-  const d = Math.max(metersPerPixel(DEM_MAXZOOM, lat), 8);
+  const d = Math.max(metersPerPixel(DEM_MAXZOOM, lat), 3);
   const dLat = d / 111320, dLng = d / (111320 * Math.cos((lat * Math.PI) / 180));
-  const [n, s, e, w, c] = await Promise.all([
-    elevationAt(lng, lat + dLat), elevationAt(lng, lat - dLat),
-    elevationAt(lng + dLng, lat), elevationAt(lng - dLng, lat), elevationAt(lng, lat),
-  ]);
-  if ([n, s, e, w, c].some((v) => v === null)) return null;
-  const dzdx = (e! - w!) / (2 * d), dzdy = (n! - s!) / (2 * d);
+  const offsets = [-1, 0, 1];
+  const h = await Promise.all(offsets.flatMap((j) => offsets.map((i) => elevationAt(lng + i * dLng, lat - j * dLat))));
+  if (h.some((v) => v === null)) return null;
+  const v = (i: number, j: number) => h[(j + 1) * 3 + (i + 1)]!; // i east, j south
+  const dzdx = (v(1, -1) + 2 * v(1, 0) + v(1, 1) - (v(-1, -1) + 2 * v(-1, 0) + v(-1, 1))) / (8 * d);
+  const dzdy = (v(-1, 1) + 2 * v(0, 1) + v(1, 1) - (v(-1, -1) + 2 * v(0, -1) + v(1, -1))) / (8 * d); // + south
   const slope = (Math.atan(Math.hypot(dzdx, dzdy)) * 180) / Math.PI;
-  const aspect = ((Math.atan2(-dzdx, -dzdy) * 180) / Math.PI + 360) % 360;
-  return { elevation: c!, slope, aspect };
+  const aspect = ((Math.atan2(-dzdx, dzdy) * 180) / Math.PI + 360) % 360;
+  return { elevation: v(0, 0), slope, aspect };
 }

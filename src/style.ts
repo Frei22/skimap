@@ -273,7 +273,7 @@ export function buildStyle(
       },
       dem: { ...demSource, attribution: DEM_LAYERS.map((l) => l.attribution).join(' · ') },
       'dem-hillshade': demSource,
-      slope: { type: 'raster', tiles: [slopeTileUrl(slopeFilter)], tileSize: 256, minzoom: 8, maxzoom: DEM_MAXZOOM + 1 },
+      slope: { type: 'raster', tiles: [slopeTileUrl(slopeFilter)], tileSize: imageryTileSize, minzoom: 8, maxzoom: DEM_MAXZOOM + 1 },
       contours: { type: 'vector', tiles: [contourTiles], maxzoom: 15, minzoom: 10 },
       labels: {
         type: 'vector', url: LABELS_TILEJSON,

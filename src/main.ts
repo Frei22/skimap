@@ -235,12 +235,17 @@ hd.checked = settings.hd;
 hd.addEventListener('change', () => {
   settings.hd = hd.checked;
   save();
-  // tileSize can't change in place: rebuild the imagery source under the same layer.
-  const src = map.getStyle().sources.imagery;
-  map.removeLayer('imagery');
-  map.removeSource('imagery');
-  map.addSource('imagery', { ...src, tileSize: settings.hd ? 128 : 256 } as maplibregl.RasterSourceSpecification);
-  map.addLayer({ id: 'imagery', type: 'raster', source: 'imagery', paint: { 'raster-fade-duration': 120, 'raster-resampling': 'linear' } }, 'hillshade');
+  // tileSize can't change in place: rebuild the sources under the same layers, keeping the layers' settings.
+  for (const id of ['imagery', 'slope']) {
+    const style = map.getStyle();
+    const layer = style.layers.find((l) => l.id === id)!;
+    const before = style.layers[style.layers.indexOf(layer) + 1]?.id;
+    const src = style.sources[id];
+    map.removeLayer(id);
+    map.removeSource(id);
+    map.addSource(id, { ...src, tileSize: settings.hd ? 128 : 256 } as maplibregl.RasterSourceSpecification);
+    map.addLayer(layer, before);
+  }
 });
 
 $('#sources').innerHTML =
