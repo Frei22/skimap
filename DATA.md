@@ -29,6 +29,7 @@ holes from the next.
 | Layer | Resolution | Coverage | Licence |
 | --- | --- | --- | --- |
 | IGN LiDAR HD terrain model, RGE ALTI where not yet flown (Géoplateforme WMS, raw float32) | ~1 m | France | Licence Ouverte Etalab 2.0 |
+| Lantmäteriet Markhöjdmodell (built by the deploy workflow, served as PMTiles at zoom 15 ≈ 1.8 m) | 1 m | Riksgränsen, Hemavan | CC BY 4.0 |
 | Your own PMTiles via `VITE_DEM_LAYERS` | as built | anywhere | as source |
 | Mapzen Terrain Tiles (AWS Open Data) | ~25 m in Europe (EU-DEM), 30 m elsewhere | World | Free with attribution |
 
@@ -87,8 +88,10 @@ Geotorget account with the product ordered. The deploy workflow does the rest:
 
 The workflow searches the STAC-hojd catalogue for the areas in `SWEDISH_DEM_AREAS`
 (`.github/workflows/deploy.yml`), downloads the 10 × 10 km GeoTIFFs, builds one PMTiles archive
-per area with `scripts/build-dem.py` (zoom 15 ≈ 1.8 m at 68°N), and serves them with the site. The
-result is cached, so later deploys reuse it. To add an area, add a line to `SWEDISH_DEM_AREAS`.
+per area with `scripts/build-dem.py` (zoom 15 ≈ 1.8 m at 68°N), and serves them with the site. Each
+area is cached: later deploys only download areas that are new or whose bbox changed (1–2 GB
+and 10–25 minutes per area). To add an area, add a line to `SWEDISH_DEM_AREAS`. Riksgränsen
+(70 MB) and Hemavan (89 MB) are built; the Norwegian side of Riksgränsen falls back to the global model.
 
 To do it by hand instead:
 
@@ -125,8 +128,7 @@ Chamonix, 0 m for Lapland). Tune it to the season look you prefer.
 
 Checked against the live services from the build sandbox: IGN orthophotos and LiDAR HD elevation,
 swisstopo, Esri World Imagery, OpenFreeMap labels and fonts, and the Mapzen terrain tiles (all
-CORS-enabled). Not yet exercised: the public Overpass servers (unreachable from the sandbox; the
-deploy workflow pre-bakes pistes from GitHub's servers instead) and the Lantmäteriet download
-(needs your Geotorget login; the workflow log shows exactly what happened on the first run).
+CORS-enabled). The deploy workflow pre-bakes pistes from the public Overpass servers and downloads
+the Lantmäteriet 1 m model (`dtm-cog` collection of STAC-hojd, 10 × 10 km GeoTIFFs) from GitHub's servers.
 
 If something looks off in a real browser, the browser console says which source failed.

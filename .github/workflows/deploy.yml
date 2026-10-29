@@ -67,36 +67,62 @@ jobs:
           path: public/data/osm
           key: osm-${{ github.run_id }}
 
+      # Swedish elevation: an area is downloaded and built only when it's new or its bbox or the
+      # build scripts changed (~1.5 GB and ~15 min each); the rest comes from the last build.
       - name: Restore Swedish elevation
-        id: demcache
         uses: actions/cache/restore@v4
         with:
           path: public/dem
-          key: lm-dem-v1-${{ hashFiles('scripts/build-dem.py', 'scripts/fetch-lantmateriet.py', '.github/workflows/deploy.yml') }}
+          key: lm-dem-${{ github.run_id }}
+          restore-keys: lm-dem-
       - name: Build Swedish 1 m elevation (Lantmäteriet)
         id: lmbuild
-        if: steps.demcache.outputs.cache-hit != 'true'
-        continue-on-error: true # the site still deploys, with the global elevation in Sweden
+        continue-on-error: true # the site still deploys, with the last good build or the global elevation
         env:
           LANTMATERIET_USER: ${{ secrets.LANTMATERIET_USER }}
           LANTMATERIET_PASSWORD: ${{ secrets.LANTMATERIET_PASSWORD }}
         run: |
-          if [ -z "$LANTMATERIET_USER" ]; then echo "No Lantmäteriet secrets set; skipping."; exit 0; fi
-          pip install --quiet rasterio numpy pillow pmtiles
           mkdir -p public/dem
+          scripts=$(cat scripts/build-dem.py scripts/fetch-lantmateriet.py | sha256sum | cut -c1-16)
+          for f in public/dem/*.pmtiles; do
+            [ -e "$f" ] || continue
+            id=$(basename "$f" .pmtiles)
+            if ! echo "$SWEDISH_DEM_AREAS" | grep -q "^ *$id "; then
+              echo "$id: no longer listed, removing"
+              rm -f "$f" "public/dem/$id.stamp"
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          done
           echo "$SWEDISH_DEM_AREAS" | while read -r id w s e n; do
             [ -z "$id" ] && continue
-            python scripts/fetch-lantmateriet.py --bbox $w $s $e $n --out "dem-src/$id"
-            python scripts/build-dem.py -o "public/dem/$id.pmtiles" --minzoom 10 --maxzoom 15 --bbox $w $s $e $n dem-src/$id/*.tif
+            stamp="$w $s $e $n $scripts"
+            # Builds from before stamps existed were made with these same scripts and areas.
+            if [ -f "public/dem/$id.pmtiles" ] && [ ! -f "public/dem/$id.stamp" ]; then
+              echo "$stamp" > "public/dem/$id.stamp"
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+            if [ -f "public/dem/$id.pmtiles" ] && [ "$(cat "public/dem/$id.stamp")" = "$stamp" ]; then
+              echo "$id: up to date"
+              continue
+            fi
+            if [ -z "$LANTMATERIET_USER" ]; then echo "$id: no Lantmäteriet secrets set; skipping"; continue; fi
+            [ -n "$deps" ] || { pip install --quiet rasterio numpy pillow pmtiles; deps=1; }
+            if python scripts/fetch-lantmateriet.py --bbox $w $s $e $n --out "dem-src/$id" &&
+               python scripts/build-dem.py -o "dem-src/$id.pmtiles" --minzoom 10 --maxzoom 15 --bbox $w $s $e $n dem-src/$id/*.tif; then
+              mv "dem-src/$id.pmtiles" "public/dem/$id.pmtiles"
+              echo "$stamp" > "public/dem/$id.stamp"
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning::$id: Lantmäteriet build failed; keeping the previous build if there is one"
+            fi
             rm -rf "dem-src/$id"
           done
-          echo "built=true" >> "$GITHUB_OUTPUT"
       - name: Cache Swedish elevation
-        if: steps.lmbuild.outputs.built == 'true'
+        if: steps.lmbuild.outputs.changed == 'true'
         uses: actions/cache/save@v4
         with:
           path: public/dem
-          key: ${{ steps.demcache.outputs.cache-primary-key }}
+          key: lm-dem-${{ github.run_id }}
       - name: Configure elevation layers
         run: |
           BASE="${{ steps.pages.outputs.base_url }}"
